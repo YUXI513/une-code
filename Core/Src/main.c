@@ -23,6 +23,10 @@
 /* USER CODE BEGIN Includes */
 #include "oled.h"
 #include "buck_pwm.h"
+#include "buck_adc.h"
+#include "buck_display_filter.h"
+#include <math.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -32,7 +36,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* Safe fallback for builds outside this CMake configuration. */
+#ifndef ADC_ONLY_TEST
+#define ADC_ONLY_TEST 1
+#endif
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,7 +50,15 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+volatile uint32_t adc_schedule_missed;
+volatile HAL_StatusTypeDef adc_init_status;
+/* Display-only values; buck_input/output_voltage remain unsmoothed. */
+volatile float buck_input_voltage_display = NAN;
+volatile float buck_output_voltage_display = NAN;
+static BuckDisplayFilter input_display_filter;
+static BuckDisplayFilter output_display_filter;
+static BuckDisplayDigits input_display_digits;
+static BuckDisplayDigits output_display_digits;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,7 +70,140 @@ static void MX_GPIO_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#if ADC_ONLY_TEST
+static void App_HoldPWMInactive(void)
+{
+    GPIO_InitTypeDef gpio = {0};
+    /* No TIM1 initialization, alternate function, counter, MOE or start.
+     * Load the output latch LOW before selecting GPIO output mode. */
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    gpio.Pin = GPIO_PIN_10;
+    HAL_GPIO_Init(GPIOA, &gpio);
+    gpio.Pin = GPIO_PIN_13;
+    HAL_GPIO_Init(GPIOB, &gpio);
+}
+#endif
 
+static void App_SetVoltageLine(uint8_t row, const char *label, float voltage, uint32_t estimate)
+{
+    char line[22];
+    if (isfinite(voltage))
+    {
+        unsigned long hundredths = (unsigned long)(voltage * 100.0f + 0.5f);
+        snprintf(line, sizeof(line), "%s:%s%lu.%02luV",
+                 label, estimate ? "~" : "", hundredths / 100UL, hundredths % 100UL);
+    }
+    else
+        snprintf(line, sizeof(line), "%s:--.--V", label);
+    OLED_SetTextLine(row, line);
+}
+
+static void App_UpdateVoltageMonitor(void)
+{
+    float input = BuckADC_GetInputVoltage();
+    float output = BuckADC_GetOutputVoltage();
+    uint32_t input_estimate = !isfinite(input);
+    uint32_t output_estimate = !isfinite(output);
+    if (input_estimate) input = BuckADC_GetInputVoltageEstimate();
+    if (output_estimate) output = BuckADC_GetOutputVoltageEstimate();
+    uint32_t now = HAL_GetTick();
+    float filtered_input = BuckDisplayFilter_Update(&input_display_filter, input, now, input_estimate);
+    float filtered_output = BuckDisplayFilter_Update(&output_display_filter, output, now, output_estimate);
+    /* Invalidate digit history immediately, even between OLED refreshes. */
+    if (!isfinite(filtered_input))
+        buck_input_voltage_display = BuckDisplayDigits_Update(&input_display_digits, NAN, now, input_estimate);
+    if (!isfinite(filtered_output))
+        buck_output_voltage_display = BuckDisplayDigits_Update(&output_display_digits, NAN, now, output_estimate);
+}
+
+static void App_UpdateVoltageDisplay(void)
+{
+    char line[22];
+    /* Recheck current ADC validity before showing a stored filter value. */
+    float input = BuckADC_GetInputVoltage();
+    float output = BuckADC_GetOutputVoltage();
+    uint32_t input_estimate = !isfinite(input);
+    uint32_t output_estimate = !isfinite(output);
+    if (input_estimate) input = BuckADC_GetInputVoltageEstimate();
+    if (output_estimate) output = BuckADC_GetOutputVoltageEstimate();
+    if (!isfinite(input)) BuckDisplayFilter_Reset(&input_display_filter);
+    if (!isfinite(output)) BuckDisplayFilter_Reset(&output_display_filter);
+    uint32_t now = HAL_GetTick();
+    input = BuckDisplayFilter_Get(&input_display_filter, now);
+    output = BuckDisplayFilter_Get(&output_display_filter, now);
+    input = BuckDisplayDigits_Update(&input_display_digits, input, now, input_estimate);
+    output = BuckDisplayDigits_Update(&output_display_digits, output, now, output_estimate);
+    buck_input_voltage_display = input;
+    buck_output_voltage_display = output;
+    App_SetVoltageLine(0U, "VIN", input, input_estimate);
+    App_SetVoltageLine(1U, "VOUT", output, output_estimate);
+
+    /* A valid ADC conversion at a rail is an input-range diagnostic, not
+     * a conversion failure. Keep the module flags/validity unchanged. */
+    uint32_t conversion_faults = adc_error_code
+        & ~(BUCK_ADC_ERR_REFERENCE | BUCK_ADC_ERR_NEGATIVE | BUCK_ADC_ERR_RAIL);
+    uint32_t input_limit = adc_input_error_code & BUCK_ADC_ERR_RAIL;
+    uint32_t output_limit = adc_output_error_code & BUCK_ADC_ERR_RAIL;
+    const char *signal_state = NULL;
+    if (conversion_faults != 0U)
+        signal_state = "ADC ERROR";
+    else if (input_limit != 0U && output_limit != 0U)
+        signal_state = "VIN VOUT ADC LIMIT";
+    else if (input_limit != 0U)
+        signal_state = "VIN ADC LIMIT";
+    else if (output_limit != 0U)
+        signal_state = "VOUT ADC LIMIT";
+    else if ((adc_error_code & BUCK_ADC_ERR_NEGATIVE) != 0U)
+        signal_state = "NEGATIVE DIFF";
+
+    const char *state = "ADC OK";
+    if ((adc_error_code & BUCK_ADC_ERR_VREFBUF_READY) != 0U)
+        state = "VREF NOT READY";
+    else if ((adc_error_code & BUCK_ADC_ERR_REFERENCE_MODE) != 0U)
+        state = "VREF CONFIG ERROR";
+    else if (signal_state != NULL)
+        state = signal_state;
+    else if (BUCK_ADC_INTERNAL_REFERENCE_TEST && (adc_input_estimate_valid || adc_output_estimate_valid)
+             && (adc_error_code & BUCK_ADC_ERR_REFERENCE) != 0U)
+        state = "NOMINAL VREF 2.5V";
+    else if ((adc_error_code & BUCK_ADC_ERR_REFERENCE) != 0U)
+        state = "REF UNCONFIRMED";
+    OLED_SetTextLine(2U, state);
+    if (adc_raw_valid != 0U)
+    {
+        snprintf(line, sizeof(line), "IN +%4lu -%4lu",
+                 (unsigned long)adc_input_raw_plus, (unsigned long)adc_input_raw_minus);
+        OLED_SetTextLine(3U, line);
+        snprintf(line, sizeof(line), "OUT+%4lu -%4lu",
+                 (unsigned long)adc_raw_plus, (unsigned long)adc_raw_minus);
+        OLED_SetTextLine(4U, line);
+    }
+    else
+    {
+        OLED_SetTextLine(3U, "IN +---- -----");
+        OLED_SetTextLine(4U, "OUT+---- -----");
+    }
+    snprintf(line, sizeof(line), "EI:%04lX EO:%04lX",
+             (unsigned long)adc_input_error_code, (unsigned long)adc_output_error_code);
+    OLED_SetTextLine(5U, line);
+    if (signal_state != NULL)
+        OLED_SetTextLine(6U, signal_state);
+    else if (BUCK_ADC_INTERNAL_REFERENCE_TEST && adc_reference_hardware_confirmed == 0U)
+        OLED_SetTextLine(6U, adc_vrefbuf_ready != 0U ? "VREFBUF READY - TEST" : "VREFBUF NOT READY");
+    else
+        OLED_SetTextLine(6U, adc_raw_valid != 0U ? "RAW OK" : "NO RAW");
+#if ADC_ONLY_TEST
+    OLED_SetTextLine(7U, "ADC ONLY - PWM OFF");
+#else
+    OLED_SetTextLine(7U, "OPEN LOOP PWM");
+#endif
+}
 /* USER CODE END 0 */
 
 /**
@@ -75,7 +223,9 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+#if ADC_ONLY_TEST
+  App_HoldPWMInactive();
+#endif
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -89,10 +239,20 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
+#if !ADC_ONLY_TEST
   BuckPWM_Init();
+#endif
   OLED_Init();
-  OLED_ShowOpenLoopDebug();
+  adc_init_status = BuckADC_Init();
+  if (adc_init_status == HAL_OK) (void)BuckADC_ReadVoltage();
+  App_UpdateVoltageMonitor();
+  App_UpdateVoltageDisplay();
+#if !ADC_ONLY_TEST
+  /* Only compiled after explicitly selecting ADC_ONLY_TEST=OFF. */
   BuckPWM_Start();
+#endif
+  uint32_t sample_tick = HAL_GetTick();
+  uint32_t display_tick = sample_tick;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -102,6 +262,28 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    uint32_t now = HAL_GetTick();
+    uint32_t elapsed = now - sample_tick;
+    if (elapsed >= BUCK_ADC_UPDATE_MS)
+    {
+      /* Skip expired slots rather than burst-sampling to catch up. */
+      uint32_t periods = elapsed / BUCK_ADC_UPDATE_MS;
+      adc_schedule_missed += periods - 1U;
+      sample_tick += periods * BUCK_ADC_UPDATE_MS;
+      if (adc_init_status == HAL_OK) (void)BuckADC_ReadVoltage();
+      App_UpdateVoltageMonitor();
+    }
+    now = HAL_GetTick();
+    if ((uint32_t)(now - display_tick) >= 200U)
+    {
+      display_tick = now;
+      App_UpdateVoltageDisplay();
+    }
+    /* Software SPI runs only with at least 3 ms until the next sample slot.
+     * Check adc_schedule_missed on hardware; this is cooperative monitoring,
+     * not a PWM-synchronous control-loop sampling schedule. */
+    if ((uint32_t)(HAL_GetTick() - sample_tick) < BUCK_ADC_UPDATE_MS - 3U)
+      OLED_Process();
   }
   /* USER CODE END 3 */
 }
@@ -126,6 +308,7 @@ void SystemClock_Config(void)
   * in the RCC_OscInitTypeDef structure.
   */
   /* Board crystal: 8 MHz, crystal/resonator mode (not external-clock bypass). */
+
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   /* 8 MHz / 2 * 84 / 2 = 168 MHz SYSCLK and TIM1 clock. */
@@ -182,8 +365,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-............
-  ...
   /* USER CODE END MX_GPIO_Init_2 */
 }
 

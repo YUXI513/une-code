@@ -19,5 +19,9 @@
 void OLED_Init(void);
 void OLED_Clear(void);
 void OLED_ShowOpenLoopDebug(void);
+/* 21 characters per 8-pixel text row. Queue text, then service one dirty
+ * character per call from main; never refresh a full screen in an ISR. */
+void OLED_SetTextLine(uint8_t row, const char *text);
+void OLED_Process(void);
 
 #endif /* OLED_H */
