@@ -7,6 +7,10 @@
 #include <string.h>
 
 volatile uint32_t adc_raw_valid = 1U, adc_last_sample_ms = 100U, adc_update_count = 1U;
+volatile uint32_t adc_input_error_code = BUCK_ADC_ERR_REFERENCE, adc_output_error_code = BUCK_ADC_ERR_REFERENCE;
+volatile uint32_t adc_input_raw_plus = 2000U, adc_input_raw_minus = 1600U;
+volatile uint32_t adc_raw_plus = 1800U, adc_raw_minus = 1700U;
+volatile float buck_input_voltage = 20.0f, buck_output_voltage = 0.1f;
 static uint32_t tick = 100U, running, starts, stops, reject_duty, inject_watchdog;
 static float vin = 20.0f, vout = 0.1f;
 uint32_t HAL_GetTick(void) { return tick; }
@@ -116,12 +120,15 @@ int main(int argc, char **argv)
     else assert(0);
     assert(running == 0U && buck_control_pwm_active == 0U && stops > 0U);
     assert(buck_control_state == BUCK_CONTROL_FAULT && buck_control_fault != 0U);
+    assert(buck_control_fault_snapshot.valid == 1U);
+    assert(buck_control_fault_snapshot.start_attempts == 1U);
     buck_control_request = BUCK_CONTROL_CMD_START;
     BuckControl_Process(tick);
     assert(starts == 1U && running == 0U);
     buck_control_request = BUCK_CONTROL_CMD_CLEAR_FAULT;
     BuckControl_Process(tick);
     assert(buck_control_state == BUCK_CONTROL_STOPPED && buck_control_hardware_ready == 0U);
+    assert(buck_control_fault_snapshot.valid == 0U);
     printf("PASS fault latching/stop/rearm %s\n", s);
 #else
     assert(0);

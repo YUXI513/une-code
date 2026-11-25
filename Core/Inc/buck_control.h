@@ -84,6 +84,20 @@ extern volatile uint32_t buck_control_auto_samples, buck_control_auto_wait;
  * most 200 ms after PWM starts; closes early above +0.5 V. No calibration
  * or clamping occurs. All ADC flags/raw values remain visible/unchanged. */
 extern volatile uint32_t buck_control_startup_negative;
+
+typedef struct
+{
+    uint32_t valid, control_error, source_state;
+    uint32_t input_error, output_error, raw_valid;
+    uint32_t input_raw_plus, input_raw_minus, output_raw_plus, output_raw_minus;
+    uint32_t elapsed_ms, sample_age_ms, start_attempts, negative_permitted;
+    float input_voltage, output_voltage;
+} BuckControlFaultSnapshot;
+/* First fault only; never overwritten by later successful ADC samples or
+ * repeated watchdog handling. Reset/CLEAR_FAULT clears valid. Signed,
+ * unsmoothed voltage and ADC flags are frozen together for OLED/Watch. */
+extern volatile BuckControlFaultSnapshot buck_control_fault_snapshot;
+extern volatile uint32_t buck_control_start_attempts;
 extern volatile uint32_t buck_control_feedback_estimate;
 extern volatile uint32_t buck_control_last_step_ms, buck_control_steps;
 extern volatile float buck_control_reference, buck_control_error;

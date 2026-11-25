@@ -21,6 +21,8 @@ volatile uint32_t buck_control_hardware_ready;
 volatile uint32_t buck_control_auto_pending;
 volatile uint32_t buck_control_auto_samples, buck_control_auto_wait;
 volatile uint32_t buck_control_startup_negative;
+volatile BuckControlFaultSnapshot buck_control_fault_snapshot;
+volatile uint32_t buck_control_start_attempts;
 volatile uint32_t buck_control_feedback_estimate;
 volatile uint32_t buck_control_last_step_ms, buck_control_steps;
 volatile float buck_control_reference, buck_control_error;
@@ -65,7 +67,32 @@ static void StopOutputs(void)
 
 static void SetFault(uint32_t reason)
 {
+    uint32_t source_state = buck_control_state;
     StopOutputs();
+    if (!buck_control_fault_snapshot.valid)
+    {
+        uint32_t now = HAL_GetTick();
+        buck_control_fault_snapshot.control_error = buck_control_fault | reason;
+        buck_control_fault_snapshot.source_state = source_state;
+        buck_control_fault_snapshot.input_error = adc_input_error_code;
+        buck_control_fault_snapshot.output_error = adc_output_error_code;
+        buck_control_fault_snapshot.raw_valid = adc_raw_valid;
+        buck_control_fault_snapshot.input_raw_plus = adc_input_raw_plus;
+        buck_control_fault_snapshot.input_raw_minus = adc_input_raw_minus;
+        buck_control_fault_snapshot.output_raw_plus = adc_raw_plus;
+        buck_control_fault_snapshot.output_raw_minus = adc_raw_minus;
+        buck_control_fault_snapshot.input_voltage = buck_input_voltage;
+        buck_control_fault_snapshot.output_voltage = buck_output_voltage;
+        buck_control_fault_snapshot.sample_age_ms = now - adc_last_sample_ms;
+        buck_control_fault_snapshot.start_attempts = buck_control_start_attempts;
+        buck_control_fault_snapshot.negative_permitted = NegativeStartupPermitted(now);
+        buck_control_fault_snapshot.elapsed_ms = 0U;
+#if BUCK_CONTROL_AUTO_START
+        if (buck_control_start_attempts != 0U)
+            buck_control_fault_snapshot.elapsed_ms = now - startup_started_ms;
+#endif
+        buck_control_fault_snapshot.valid = 1U;
+    }
     buck_control_auto_pending = 0U;
     automatic_permit = 0U;
     buck_control_startup_negative = 0U;
@@ -138,6 +165,8 @@ void BuckControl_Init(void)
     startup_started_ms = 0U;
     startup_negative_done = 0U;
 #endif
+    buck_control_fault_snapshot.valid = 0U;
+    buck_control_start_attempts = 0U;
     buck_control_request = BUCK_CONTROL_CMD_NONE;
     buck_control_last_step_ms = HAL_GetTick();
     buck_control_steps = 0U;
@@ -173,6 +202,7 @@ static void HandleCommand(uint32_t now)
         buck_control_hardware_ready = 0U;
         buck_control_fault = 0U;
         buck_control_async_fault = 0U;
+        buck_control_fault_snapshot.valid = 0U;
         buck_control_state = BUCK_CONTROL_STOPPED;
         buck_control_duty = 0.0f;
         need_reset = 1U;
@@ -235,6 +265,7 @@ static void HandleCommand(uint32_t now)
 #endif
     buck_control_pwm_active = 1U;
     buck_control_state = BUCK_CONTROL_SOFT_START;
+    ++buck_control_start_attempts;
     BuckPWM_Start();
     if (!BuckPWM_IsRunning() || buck_control_async_fault != 0U)
     {

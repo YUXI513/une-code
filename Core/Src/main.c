@@ -201,6 +201,38 @@ static void App_UpdateVoltageDisplay(void)
 #else
     OLED_SetTextLine(7U, "OPEN LOOP PWM");
 #endif
+    if (buck_control_state == BUCK_CONTROL_FAULT && buck_control_fault_snapshot.valid)
+    {
+        /* Freeze first-fault evidence. Live ADC after stopping must not
+         * replace the error/unsmoothed voltage that actually stopped PWM. */
+        const volatile BuckControlFaultSnapshot *fault = &buck_control_fault_snapshot;
+        buck_input_voltage_display = fault->input_voltage;
+        buck_output_voltage_display = fault->output_voltage;
+        App_SetVoltageLine(0U, "F VIN", fault->input_voltage,
+                           (fault->input_error & BUCK_ADC_ERR_REFERENCE) != 0U);
+        App_SetVoltageLine(1U, "F VOUT", fault->output_voltage,
+                           (fault->output_error & BUCK_ADC_ERR_REFERENCE) != 0U);
+        snprintf(line, sizeof(line), "TRY:%lu T:%luMS",
+                 (unsigned long)fault->start_attempts, (unsigned long)fault->elapsed_ms);
+        OLED_SetTextLine(2U, line);
+        if (fault->raw_valid)
+        {
+            snprintf(line, sizeof(line), "F IN +%4lu -%4lu",
+                     (unsigned long)fault->input_raw_plus, (unsigned long)fault->input_raw_minus);
+            OLED_SetTextLine(3U, line);
+            snprintf(line, sizeof(line), "F OUT+%4lu -%4lu",
+                     (unsigned long)fault->output_raw_plus, (unsigned long)fault->output_raw_minus);
+            OLED_SetTextLine(4U, line);
+        }
+        else
+        {
+            OLED_SetTextLine(3U, "F RAW INVALID");
+            OLED_SetTextLine(4U, "SEE FI/FO ERROR");
+        }
+        snprintf(line, sizeof(line), "FI:%04lX FO:%04lX",
+                 (unsigned long)fault->input_error, (unsigned long)fault->output_error);
+        OLED_SetTextLine(5U, line);
+    }
 }
 /* USER CODE END 0 */
 

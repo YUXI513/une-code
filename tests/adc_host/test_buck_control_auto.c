@@ -9,6 +9,10 @@
 #include <string.h>
 
 volatile uint32_t adc_raw_valid = 1U, adc_last_sample_ms = 100U, adc_update_count = 1U;
+volatile uint32_t adc_input_error_code = BUCK_ADC_ERR_REFERENCE, adc_output_error_code = BUCK_ADC_ERR_REFERENCE;
+volatile uint32_t adc_input_raw_plus = 2000U, adc_input_raw_minus = 1600U;
+volatile uint32_t adc_raw_plus = 1800U, adc_raw_minus = 1700U;
+volatile float buck_input_voltage = 20.0f, buck_output_voltage = 0.1f;
 static uint32_t tick = 100U, running, starts, reject_duty;
 static uint32_t other_adc_error;
 static float vin = 20.0f, vout = 0.1f;
@@ -38,6 +42,11 @@ static void Sample(void)
     tick += 10U;
     adc_last_sample_ms = tick;
     ++adc_update_count;
+    buck_input_voltage = adc_raw_valid ? vin : NAN;
+    buck_output_voltage = adc_raw_valid && !other_adc_error ? vout : NAN;
+    adc_input_error_code = BUCK_ADC_ERR_REFERENCE | (adc_raw_valid ? 0U : BUCK_ADC_ERR_TIMEOUT);
+    adc_output_error_code = adc_input_error_code | (vout < 0.0f ? BUCK_ADC_ERR_NEGATIVE : 0U)
+        | (other_adc_error ? BUCK_ADC_ERR_OVERRUN : 0U);
     BuckControl_Process(tick);
 }
 static void WaitSamples(uint32_t count)
@@ -224,15 +233,37 @@ int main(int argc, char **argv)
         return 0;
     }
     assert(buck_control_state == BUCK_CONTROL_FAULT && running == 0U);
+    assert(buck_control_fault_snapshot.valid == 1U);
+    BuckControlFaultSnapshot first = buck_control_fault_snapshot;
+    assert(first.control_error == buck_control_fault);
+    assert(first.start_attempts == starts);
+    if (IS("startup_drop_below_limit"))
+    {
+        assert(first.output_error == (BUCK_ADC_ERR_REFERENCE | BUCK_ADC_ERR_NEGATIVE));
+        assert(fabsf(first.output_voltage + 0.501f) < 0.00001f);
+        assert(first.negative_permitted == 1U && first.elapsed_ms == 10U);
+    }
+    if (IS("startup_timeout") || IS("startup_timeout_wrap"))
+    {
+        assert(first.elapsed_ms == 200U && first.negative_permitted == 0U);
+    }
     uint32_t previous_starts = starts;
     adc_raw_valid = 1U; vout = 0.1f;
     WaitSamples(200U);
     assert(starts == previous_starts && running == 0U);
+    /* Subsequent successful acquisition must not erase the fault evidence. */
+    assert(adc_output_error_code == BUCK_ADC_ERR_REFERENCE);
+    assert(buck_control_fault_snapshot.control_error == first.control_error);
+    assert(buck_control_fault_snapshot.output_error == first.output_error);
+    assert(buck_control_fault_snapshot.elapsed_ms == first.elapsed_ms);
+    assert(isnan(first.output_voltage) ? isnan(buck_control_fault_snapshot.output_voltage)
+        : buck_control_fault_snapshot.output_voltage == first.output_voltage);
     buck_control_request = BUCK_CONTROL_CMD_CLEAR_FAULT;
     BuckControl_Process(tick);
     WaitSamples(200U);
     assert(starts == previous_starts && running == 0U);
     assert(buck_control_auto_pending == 0U && buck_control_hardware_ready == 0U);
+    assert(buck_control_fault_snapshot.valid == 0U);
     puts("PASS fault latches and clear never silently rearms automatic startup");
     return 0;
 }
