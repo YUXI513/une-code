@@ -43,7 +43,7 @@ target_compile_definitions(stm32cubemx INTERFACE HSE_VALUE=8000000U)
 
 # Safe default: ADC monitoring only, never start the Buck power PWM.
 # Restore the original open-loop application only by explicitly setting OFF.
-option(ADC_ONLY_TEST "ADC/OLED test with PA10 and PB13 held low" ON)
+option(ADC_ONLY_TEST "ADC/OLED test with PA10/PB15 held low; PB13 retired" ON)
 target_sources(STM32_Drivers PRIVATE
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_adc.c
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_adc_ex.c

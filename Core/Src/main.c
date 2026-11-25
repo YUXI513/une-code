@@ -81,13 +81,15 @@ static void App_HoldPWMInactive(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13 | GPIO_PIN_15, GPIO_PIN_RESET);
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
     gpio.Pull = GPIO_NOPULL;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     gpio.Pin = GPIO_PIN_10;
     HAL_GPIO_Init(GPIOA, &gpio);
-    gpio.Pin = GPIO_PIN_13;
+    /* PB15 is the new low-side output; retired PB13 must not toggle while
+     * the internal reference buffer supplies ADC VREF+. */
+    gpio.Pin = GPIO_PIN_13 | GPIO_PIN_15;
     HAL_GPIO_Init(GPIOB, &gpio);
 }
 #endif

@@ -16,6 +16,8 @@
  * Neither mode certifies the reference/hardware.
  * Do not externally power VREF+ while running this internal-reference test.
  * VDDA was measured as 3.3 V. Internal 2.5 V requires VDDA >= 2.8 V.
+ * PWM uses PA10/PB15. Retired PB13 stays LOW to avoid the ES0430 2.8.1
+ * VREFBUF disturbance; moving pins does not validate the reference capacitor.
  * Setting the test macro to 0 retains external-reference initialization. */
 #ifndef BUCK_ADC_INTERNAL_REFERENCE_TEST
 #define BUCK_ADC_INTERNAL_REFERENCE_TEST 1U

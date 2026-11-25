@@ -18,15 +18,15 @@ static void BuckPWM_GPIO_HoldLow(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13 | GPIO_PIN_15, GPIO_PIN_RESET);
 
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
     gpio.Pull = GPIO_PULLDOWN;
     gpio.Speed = BUCK_PWM_PA10_SPEED;
     gpio.Pin = GPIO_PIN_10;
     HAL_GPIO_Init(GPIOA, &gpio);
-    gpio.Pin = GPIO_PIN_13;
-    gpio.Speed = BUCK_PWM_PB13_SPEED;
+    gpio.Pin = GPIO_PIN_13 | GPIO_PIN_15;
+    gpio.Speed = BUCK_PWM_PB15_SPEED;
     HAL_GPIO_Init(GPIOB, &gpio);
 }
 
@@ -44,11 +44,12 @@ static void BuckPWM_GPIO_ConnectTimer(void)
     gpio.Pin = GPIO_PIN_10;
     HAL_GPIO_Init(GPIOA, &gpio);
 #if !defined(BUCK_PWM_TEST_PA10_ONLY)
-    gpio.Pin = GPIO_PIN_13;
-    gpio.Speed = BUCK_PWM_PB13_SPEED;
+    gpio.Pin = GPIO_PIN_15;
+    gpio.Alternate = GPIO_AF4_TIM1;
+    gpio.Speed = BUCK_PWM_PB15_SPEED;
     HAL_GPIO_Init(GPIOB, &gpio);
 #else
-    /* Diagnostic build: PB13 stays a low GPIO from BuckPWM_GPIO_HoldLow(). */
+    /* Diagnostic build: PB15 stays LOW. Retired PB13 is always a LOW GPIO. */
 #endif
 }
 
@@ -118,25 +119,20 @@ void BuckPWM_Init(void)
     LL_TIM_EnableARRPreload(TIM1);
     LL_TIM_SetAutoReload(TIM1, period_ticks - 1U);
 
-    LL_TIM_OC_SetMode(TIM1, LL_TIM_CHANNEL_CH1, LL_TIM_OCMODE_PWM1);
     LL_TIM_OC_SetMode(TIM1, LL_TIM_CHANNEL_CH3, LL_TIM_OCMODE_PWM1);
-    LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH1);
     LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH3);
-    LL_TIM_OC_SetCompareCH1(TIM1, period_ticks / 2U);
     LL_TIM_OC_SetCompareCH3(TIM1, period_ticks / 2U);
 
     /* Reset leaves all polarities active-high and all idle levels low.
-     * Enable BOTH internal outputs of BOTH channels: with only CH1N enabled,
-     * it would follow OC1REF rather than providing a dead-time complement.
-     * Only PA10/CH3 and PB13/CH1N are mapped to GPIO alternate functions.
-     * Do not map CH1 or CH3N to additional pins for this application.
+     * CH3 and CH3N share OC3REF and the hardware dead-time generator.
+     * The TIM1 reset above leaves CH1/CH1N disabled; no duplicated compare
+     * channel is required. Only PA10/CH3 and PB15/CH3N are mapped to AF.
      */
     LL_TIM_SetOffStates(TIM1, LL_TIM_OSSI_ENABLE, LL_TIM_OSSR_ENABLE);
     LL_TIM_OC_SetDeadTime(TIM1, dead_time_code);
-    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1 | LL_TIM_CHANNEL_CH1N |
-                                LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH3N);
+    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH3N);
 
-    /* Load both compare registers together while the counter/MOE are off. */
+    /* Load CCR3 while the counter/MOE are off. */
     LL_TIM_GenerateEvent_UPDATE(TIM1);
     LL_TIM_ClearFlag_UPDATE(TIM1);
     BuckPWM_GPIO_ConnectTimer();
@@ -158,15 +154,11 @@ uint32_t BuckPWM_SetDuty(float duty)
         BuckPWM_Stop();
         return 0U;
     }
-    /* UDIS prevents a rollover between the two preload writes from loading
-     * only one new compare. Preserve a caller's pre-existing UDIS state.
-     * Never issue UG while running: keep PWM phase/frequency unchanged. */
-    uint32_t updates_disabled = READ_BIT(TIM1->CR1, TIM_CR1_UDIS);
-    LL_TIM_DisableUpdateEvent(TIM1);
-    LL_TIM_OC_SetCompareCH1(TIM1, compare);
+    /* One preloaded CCR3 controls the complementary pair. A natural update
+     * transfers it to both outputs; no UDIS manipulation or forced UG is
+     * needed, so the running PWM phase/frequency stay unchanged. */
     LL_TIM_OC_SetCompareCH3(TIM1, compare);
     __DSB();
-    if (updates_disabled == 0U) LL_TIM_EnableUpdateEvent(TIM1);
     return 1U;
 }
 
