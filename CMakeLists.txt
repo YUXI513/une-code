@@ -60,6 +60,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/oled.c
     Core/Src/buck_pwm.c
     Core/Src/buck_adc.c
+    Core/Src/buck_pid.c
+    Core/Src/buck_control.c
 )
 
 # Add include paths
@@ -92,3 +94,12 @@ target_compile_definitions(DEMO_PA10_TEST PRIVATE
     BUCK_PWM_TEST_PA10_ONLY=1 ADC_ONLY_TEST=$<BOOL:${ADC_ONLY_TEST}>)
 target_link_libraries(DEMO_PA10_TEST PRIVATE stm32cubemx STM32_Drivers ${TOOLCHAIN_LINK_LIBRARIES})
 target_link_options(DEMO_PA10_TEST PRIVATE "-Wl,-Map=DEMO_PA10_TEST.map")
+
+# Explicit MANUALLY ARMED bench controller; never selected/built by default.
+# Allows nominal VREF feedback only as an identified bench estimate. Still
+# requires hardware_ready=1 and a separate START command after reset.
+add_executable(DEMO_BUCK_CONTROL_TEST EXCLUDE_FROM_ALL ${DEMO_Application_Sources})
+target_compile_definitions(DEMO_BUCK_CONTROL_TEST PRIVATE
+    ADC_ONLY_TEST=0 BUCK_CONTROL_POWER_STAGE=1 BUCK_CONTROL_NOMINAL_BENCH=1)
+target_link_libraries(DEMO_BUCK_CONTROL_TEST PRIVATE stm32cubemx STM32_Drivers ${TOOLCHAIN_LINK_LIBRARIES})
+target_link_options(DEMO_BUCK_CONTROL_TEST PRIVATE "-Wl,-Map=DEMO_BUCK_CONTROL_TEST.map")

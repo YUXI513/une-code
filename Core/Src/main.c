@@ -25,6 +25,7 @@
 #include "buck_pwm.h"
 #include "buck_adc.h"
 #include "buck_display_filter.h"
+#include "buck_control.h"
 #include <math.h>
 #include <stdio.h>
 /* USER CODE END Includes */
@@ -70,7 +71,7 @@ static void MX_GPIO_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#if ADC_ONLY_TEST
+#if ADC_ONLY_TEST || BUCK_CONTROL_POWER_STAGE
 static void App_HoldPWMInactive(void)
 {
     GPIO_InitTypeDef gpio = {0};
@@ -198,8 +199,8 @@ static void App_UpdateVoltageDisplay(void)
         OLED_SetTextLine(6U, adc_vrefbuf_ready != 0U ? "VREFBUF READY - TEST" : "VREFBUF NOT READY");
     else
         OLED_SetTextLine(6U, adc_raw_valid != 0U ? "RAW OK" : "NO RAW");
-#if ADC_ONLY_TEST
-    OLED_SetTextLine(7U, "ADC ONLY - PWM OFF");
+#if ADC_ONLY_TEST || BUCK_CONTROL_POWER_STAGE
+    OLED_SetTextLine(7U, BuckControl_StateText());
 #else
     OLED_SetTextLine(7U, "OPEN LOOP PWM");
 #endif
@@ -223,7 +224,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-#if ADC_ONLY_TEST
+#if ADC_ONLY_TEST || BUCK_CONTROL_POWER_STAGE
   App_HoldPWMInactive();
 #endif
   /* USER CODE END Init */
@@ -245,9 +246,10 @@ int main(void)
   OLED_Init();
   adc_init_status = BuckADC_Init();
   if (adc_init_status == HAL_OK) (void)BuckADC_ReadVoltage();
+  BuckControl_Init();
   App_UpdateVoltageMonitor();
   App_UpdateVoltageDisplay();
-#if !ADC_ONLY_TEST
+#if !ADC_ONLY_TEST && !BUCK_CONTROL_POWER_STAGE
   /* Only compiled after explicitly selecting ADC_ONLY_TEST=OFF. */
   BuckPWM_Start();
 #endif
@@ -271,9 +273,12 @@ int main(void)
       adc_schedule_missed += periods - 1U;
       sample_tick += periods * BUCK_ADC_UPDATE_MS;
       if (adc_init_status == HAL_OK) (void)BuckADC_ReadVoltage();
+      BuckControl_Process(HAL_GetTick());
       App_UpdateVoltageMonitor();
     }
     now = HAL_GetTick();
+    /* STOP/START requests are serviced without waiting for OLED refresh. */
+    BuckControl_Process(now);
     if ((uint32_t)(now - display_tick) >= 200U)
     {
       display_tick = now;

@@ -1,12 +1,15 @@
 #include "buck_pwm.h"
 #include "main.h"
 #include "stm32g4xx_ll_tim.h"
+#include <math.h>
 
 #if BUCK_PWM_FREQUENCY_HZ == 0U || BUCK_PWM_DEADTIME_CODE == 0U || BUCK_PWM_DEADTIME_CODE > 255U
 #error "PWM frequency must be positive and DeadTime must be a raw code from 1 to 255"
 #endif
 
 static uint32_t buck_pwm_initialized;
+static uint32_t buck_pwm_period_ticks;
+static uint32_t buck_pwm_dead_ticks;
 
 static void BuckPWM_GPIO_HoldLow(void)
 {
@@ -75,6 +78,7 @@ void BuckPWM_Init(void)
 
     BuckPWM_Stop();
     buck_pwm_initialized = 0U;
+    buck_pwm_period_ticks = 0U;
     BuckPWM_GPIO_HoldLow();
 
     timer_clock = HAL_RCC_GetPCLK2Freq();
@@ -136,7 +140,41 @@ void BuckPWM_Init(void)
     LL_TIM_GenerateEvent_UPDATE(TIM1);
     LL_TIM_ClearFlag_UPDATE(TIM1);
     BuckPWM_GPIO_ConnectTimer();
+    buck_pwm_period_ticks = period_ticks;
+    buck_pwm_dead_ticks = BuckPWM_DecodeDeadTime(dead_time_code);
     buck_pwm_initialized = 1U;
+}
+
+uint32_t BuckPWM_SetDuty(float duty)
+{
+    if (!buck_pwm_initialized || !isfinite(duty) || duty <= 0.0f || duty >= 1.0f)
+    {
+        BuckPWM_Stop();
+        return 0U;
+    }
+    uint32_t compare = (uint32_t)(duty * (float)buck_pwm_period_ticks + 0.5f);
+    if (compare <= buck_pwm_dead_ticks || compare >= buck_pwm_period_ticks - buck_pwm_dead_ticks)
+    {
+        BuckPWM_Stop();
+        return 0U;
+    }
+    /* UDIS prevents a rollover between the two preload writes from loading
+     * only one new compare. Preserve a caller's pre-existing UDIS state.
+     * Never issue UG while running: keep PWM phase/frequency unchanged. */
+    uint32_t updates_disabled = READ_BIT(TIM1->CR1, TIM_CR1_UDIS);
+    LL_TIM_DisableUpdateEvent(TIM1);
+    LL_TIM_OC_SetCompareCH1(TIM1, compare);
+    LL_TIM_OC_SetCompareCH3(TIM1, compare);
+    __DSB();
+    if (updates_disabled == 0U) LL_TIM_EnableUpdateEvent(TIM1);
+    return 1U;
+}
+
+uint32_t BuckPWM_IsRunning(void)
+{
+    return __HAL_RCC_TIM1_IS_CLK_ENABLED()
+        && (READ_BIT(TIM1->CR1, TIM_CR1_CEN) != 0U)
+        && (READ_BIT(TIM1->BDTR, TIM_BDTR_MOE) != 0U);
 }
 
 void BuckPWM_Start(void)

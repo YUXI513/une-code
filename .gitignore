@@ -1,0 +1,14 @@
+# Generated build directories and firmware artifacts
+/build/
+/cmake-build*/
+*.o
+*.obj
+*.a
+*.elf
+*.hex
+*.bin
+*.map
+*.exe
+
+# Local IDE session state (existing shared IDE files remain tracked)
+/.idea/workspace.xml
