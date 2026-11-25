@@ -97,4 +97,11 @@ float BuckADC_GetInputVoltage(void);
 float BuckADC_GetInputVoltageEstimate(void);
 float BuckADC_GetOutputVoltageEstimate(void);
 
+/* OLED diagnostics only: retain fresh signed readings on NEGATIVE DIFF.
+ * Unknown reference is permitted only in the existing nominal bench mode.
+ * Conversion, rail, reference-mode and stale faults still return NAN.
+ * NEVER use these getters for feedback or to decide that PWM may start. */
+float BuckADC_GetInputVoltageForDisplay(void);
+float BuckADC_GetOutputVoltageForDisplay(void);
+
 #endif

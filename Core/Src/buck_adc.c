@@ -467,3 +467,26 @@ float BuckADC_GetOutputVoltageEstimate(void)
     CheckVoltageFreshness();
     return adc_output_estimate_valid ? buck_output_voltage : NAN;
 }
+
+static uint32_t DisplayReadingUsable(uint32_t error)
+{
+    uint32_t diagnostic_flags = BUCK_ADC_ERR_NEGATIVE;
+#if BUCK_ADC_INTERNAL_REFERENCE_TEST
+    diagnostic_flags |= BUCK_ADC_ERR_REFERENCE;
+#endif
+    return adc_raw_valid != 0U && ReferenceScaleUsable()
+        && (ReferenceValid() || BUCK_ADC_INTERNAL_REFERENCE_TEST)
+        && (error & ~diagnostic_flags) == 0U;
+}
+
+float BuckADC_GetInputVoltageForDisplay(void)
+{
+    CheckVoltageFreshness();
+    return DisplayReadingUsable(adc_input_error_code) ? buck_input_voltage : NAN;
+}
+
+float BuckADC_GetOutputVoltageForDisplay(void)
+{
+    CheckVoltageFreshness();
+    return DisplayReadingUsable(adc_output_error_code) ? buck_output_voltage : NAN;
+}

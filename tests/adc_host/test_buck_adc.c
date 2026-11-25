@@ -158,8 +158,13 @@ int main(int argc, char **argv)
         adc_reference_voltage = 2.2f;
         adc_vdda_voltage = 2.2f;
     }
-    if (IS("negative")) plus = 1400U;
-    if (IS("input_negative")) input_plus = 1400U;
+    if (IS("negative") || IS("negative_nominal") || IS("both_negative_nominal")) plus = 1400U;
+    if (IS("input_negative") || IS("both_negative_nominal")) input_plus = 1400U;
+    if (IS("negative_nominal") || IS("both_negative_nominal"))
+    {
+        adc_reference_confirmed = 0U;
+        adc_reference_hardware_confirmed = 0U;
+    }
     if (IS("fractional_negative")) minus = 1600U;
     if (IS("wrap")) tick = UINT32_MAX - 10U;
     if (IS("vref_loss_before")) test_vrefbuf.CSR &= ~VREFBUF_CSR_VRR;
@@ -183,6 +188,7 @@ int main(int argc, char **argv)
         assert(isnan(buck_output_voltage) && isnan(BuckADC_GetOutputVoltage()));
         assert(isnan(buck_input_voltage) && isnan(BuckADC_GetInputVoltage()));
         assert(isnan(BuckADC_GetInputVoltageEstimate()) && isnan(BuckADC_GetOutputVoltageEstimate()));
+        assert(isnan(BuckADC_GetInputVoltageForDisplay()) && isnan(BuckADC_GetOutputVoltageForDisplay()));
         if (IS("vref_loss_before") || IS("vref_loss_during"))
         {
             assert(adc_vrefbuf_ready == 0U && (test_vrefbuf.CSR & VREFBUF_CSR_ENVR) == 0U);
@@ -211,13 +217,45 @@ int main(int argc, char **argv)
             assert(isnan(adc_voltage_diff) && isnan(buck_output_voltage));
             assert(isnan(adc_input_voltage_diff) && isnan(buck_input_voltage));
         }
-        else if (IS("negative") || IS("fractional_negative"))
+        else if (IS("both_negative_nominal"))
+        {
+            assert(adc_sample_valid == 0U && adc_input_sample_valid == 0U && adc_output_sample_valid == 0U);
+            assert(isnan(BuckADC_GetInputVoltage()) && isnan(BuckADC_GetOutputVoltage()));
+            assert(isnan(BuckADC_GetInputVoltageEstimate()) && isnan(BuckADC_GetOutputVoltageEstimate()));
+#if BUCK_ADC_INTERNAL_REFERENCE_TEST
+            assert(BuckADC_GetInputVoltageForDisplay() < 0.0f);
+            assert(BuckADC_GetOutputVoltageForDisplay() < 0.0f);
+#else
+            assert(isnan(BuckADC_GetInputVoltageForDisplay()) && isnan(BuckADC_GetOutputVoltageForDisplay()));
+#endif
+            assert(adc_sample_valid == 0U); /* Diagnostic access never qualifies control feedback. */
+        }
+        else if (IS("negative_nominal") && !BUCK_ADC_INTERNAL_REFERENCE_TEST)
+        {
+            assert(adc_sample_valid == 0U);
+            assert(isnan(BuckADC_GetInputVoltageForDisplay()) && isnan(BuckADC_GetOutputVoltageForDisplay()));
+        }
+        else if (IS("negative") || IS("fractional_negative") || IS("negative_nominal"))
         {
             assert(adc_sample_valid == 0U && (adc_error_code & BUCK_ADC_ERR_NEGATIVE));
             assert(adc_voltage_diff < 0.0f && buck_output_voltage < 0.0f);
             assert(isnan(BuckADC_GetOutputVoltage()));
             assert(isnan(BuckADC_GetOutputVoltageEstimate()));
-            assert(adc_input_sample_valid == 1U && isfinite(BuckADC_GetInputVoltage()));
+            if (IS("negative_nominal"))
+            {
+                assert(adc_input_sample_valid == 0U && isnan(BuckADC_GetInputVoltage()));
+#if BUCK_ADC_INTERNAL_REFERENCE_TEST
+                assert(BuckADC_GetInputVoltageForDisplay() > 0.0f);
+                assert(BuckADC_GetOutputVoltageForDisplay() < 0.0f);
+#else
+                assert(isnan(BuckADC_GetOutputVoltageForDisplay()));
+#endif
+            }
+            else
+            {
+                assert(adc_input_sample_valid == 1U && isfinite(BuckADC_GetInputVoltage()));
+                assert(BuckADC_GetOutputVoltageForDisplay() == buck_output_voltage);
+            }
             if (IS("fractional_negative"))
             {
                 assert(adc_raw_plus == adc_raw_minus);
@@ -230,17 +268,21 @@ int main(int argc, char **argv)
             assert((adc_input_error_code & BUCK_ADC_ERR_NEGATIVE) != 0U);
             assert(buck_input_voltage < 0.0f && isnan(BuckADC_GetInputVoltage()));
             assert(adc_output_sample_valid == 1U && isfinite(BuckADC_GetOutputVoltage()));
+            assert(BuckADC_GetInputVoltageForDisplay() == buck_input_voltage);
+            assert(BuckADC_GetOutputVoltageForDisplay() > 0.0f);
         }
         else if (IS("rail"))
         {
             assert(adc_sample_valid == 0U && (adc_error_code & BUCK_ADC_ERR_RAIL));
             assert(adc_output_sample_valid == 0U && adc_input_sample_valid == 1U);
+            assert(isnan(BuckADC_GetOutputVoltageForDisplay()));
         }
         else if (IS("input_rail"))
         {
             assert(adc_sample_valid == 0U && (adc_input_error_code & BUCK_ADC_ERR_RAIL));
             assert(adc_input_sample_valid == 0U && adc_output_sample_valid == 1U);
             assert(isnan(BuckADC_GetInputVoltageEstimate()));
+            assert(isnan(BuckADC_GetInputVoltageForDisplay()));
         }
         else
         {
@@ -260,6 +302,7 @@ int main(int argc, char **argv)
                 assert(isnan(BuckADC_GetOutputVoltage()));
                 assert(isnan(BuckADC_GetInputVoltage()));
                 assert(isnan(BuckADC_GetInputVoltageEstimate()) && isnan(BuckADC_GetOutputVoltageEstimate()));
+                assert(isnan(BuckADC_GetInputVoltageForDisplay()) && isnan(BuckADC_GetOutputVoltageForDisplay()));
                 assert(adc_sample_valid == 0U && (adc_error_code & BUCK_ADC_ERR_STALE));
             }
             if (IS("revoke_reference"))

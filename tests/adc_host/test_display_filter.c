@@ -1,11 +1,27 @@
 /* Native test: gcc -std=c11 -Wall -Wextra -Werror -ICore/Inc
  * tests/adc_host/test_display_filter.c -lm -o display_filter_test */
 #include "buck_display_filter.h"
+#include "buck_voltage_display.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 int main(void)
 {
+    char line[22];
+    BuckVoltageDisplay_Format(line, sizeof(line), "VIN", 15.86f, 1U);
+    assert(strcmp(line, "VIN:~15.86V") == 0);
+    BuckVoltageDisplay_Format(line, sizeof(line), "VOUT", -0.02f, 1U);
+    assert(strcmp(line, "VOUT:~-0.02V") == 0);
+    BuckVoltageDisplay_Format(line, sizeof(line), "VIN", -6.4f, 0U);
+    assert(strcmp(line, "VIN:-6.40V") == 0);
+    BuckVoltageDisplay_Format(line, sizeof(line), "VOUT", 0.0f, 0U);
+    assert(strcmp(line, "VOUT:0.00V") == 0);
+    BuckVoltageDisplay_Format(line, sizeof(line), "VIN", NAN, 1U);
+    assert(strcmp(line, "VIN:--.--V") == 0);
+    BuckVoltageDisplay_Format(line, sizeof(line), "VIN", INFINITY, 1U);
+    assert(strcmp(line, "VIN:--.--V") == 0);
+    puts("PASS signed diagnostic voltage text and invalid placeholders");
     BuckDisplayFilter filter = {0};
     uint32_t now = 0U;
     assert(isnan(BuckDisplayFilter_Get(&filter, now)));
@@ -81,5 +97,15 @@ int main(void)
     (void)BuckDisplayDigits_Update(&digits, 10.01f, UINT32_MAX - 300U, 1U);
     assert(fabsf(BuckDisplayDigits_Update(&digits, 10.01f, 600U, 1U) - 10.01f) < 0.0001f);
     puts("PASS digit stability, sustained small changes, large steps, invalidation, source change and wrap");
+    /* Negative diagnostics are a distinct display source: no 800 ms hold
+     * may retain a previous positive value across this transition. */
+    (void)BuckDisplayFilter_Update(&filter, 0.01f, 1000U, 1U);
+    (void)BuckDisplayDigits_Update(&digits, 0.01f, 1000U, 1U);
+    float signed_value = BuckDisplayFilter_Update(&filter, -0.01f, 1010U, 3U);
+    signed_value = BuckDisplayDigits_Update(&digits, signed_value, 1010U, 3U);
+    assert(fabsf(signed_value + 0.01f) < 0.0001f);
+    BuckVoltageDisplay_Format(line, sizeof(line), "VOUT", signed_value, 1U);
+    assert(strcmp(line, "VOUT:~-0.01V") == 0);
+    puts("PASS negative diagnostic transition is displayed immediately");
     return 0;
 }
