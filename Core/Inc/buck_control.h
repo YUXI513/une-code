@@ -18,6 +18,7 @@
 
 #define BUCK_CONTROL_AUTO_READY_MS 1000U
 #define BUCK_CONTROL_AUTO_READY_SAMPLES 100U
+#define BUCK_CONTROL_STARTUP_NEGATIVE_MS 200U
 
 enum
 {
@@ -52,7 +53,8 @@ enum
     BUCK_CONTROL_ERR_DEADLINE = 1U << 10,
     BUCK_CONTROL_ERR_INTERLOCK = 1U << 11,
     BUCK_CONTROL_ERR_PREBIAS = 1U << 12,
-    BUCK_CONTROL_ERR_BUILD_MODE = 1U << 13
+    BUCK_CONTROL_ERR_BUILD_MODE = 1U << 13,
+    BUCK_CONTROL_ERR_STARTUP_VOUT = 1U << 14
 };
 
 extern BuckPIDConfig buck_control_config;
@@ -78,6 +80,10 @@ extern volatile uint32_t buck_control_hardware_ready;
  * after a running fault, STOP, PREVIEW or CLEAR_FAULT until reset. */
 extern volatile uint32_t buck_control_auto_pending;
 extern volatile uint32_t buck_control_auto_samples, buck_control_auto_wait;
+/* AUTO-only bench startup can use fresh signed VOUT >= -0.50 V, for at
+ * most 200 ms after PWM starts; closes early above +0.5 V. No calibration
+ * or clamping occurs. All ADC flags/raw values remain visible/unchanged. */
+extern volatile uint32_t buck_control_startup_negative;
 extern volatile uint32_t buck_control_feedback_estimate;
 extern volatile uint32_t buck_control_last_step_ms, buck_control_steps;
 extern volatile float buck_control_reference, buck_control_error;

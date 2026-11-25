@@ -46,4 +46,11 @@ uint32_t BuckPID_Reset(BuckPID *pid, const BuckPIDConfig *config);
 float BuckPID_Step(BuckPID *pid, const BuckPIDConfig *config, float vin,
                    float vout, float elapsed_s, uint32_t sample_valid);
 
+/* Explicit bench-start exception; no zero clamp or offset compensation.
+ * The adapter must enforce its 200 ms window and normal strict checks after
+ * output rises. Ordinary BuckPID_Step still rejects EVERY negative voltage. */
+#define BUCK_PID_STARTUP_NEGATIVE_LIMIT_V 0.50f
+float BuckPID_StepStartup(BuckPID *pid, const BuckPIDConfig *config, float vin,
+                          float vout, float elapsed_s, uint32_t sample_valid);
+
 #endif

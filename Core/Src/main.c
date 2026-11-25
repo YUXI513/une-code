@@ -190,7 +190,11 @@ static void App_UpdateVoltageDisplay(void)
     OLED_SetTextLine(5U, line);
     /* Status/errors remain on rows 2/5. A successful-sample counter makes
      * live acquisition visible even when the voltage digits are stable. */
-    snprintf(line, sizeof(line), "ADC N:%lu", (unsigned long)adc_update_count);
+    if (buck_control_state == BUCK_CONTROL_FAULT || buck_control_async_fault != 0U)
+        snprintf(line, sizeof(line), "PID ERR:%04lX",
+                 (unsigned long)(buck_control_fault | buck_control_async_fault));
+    else
+        snprintf(line, sizeof(line), "ADC N:%lu", (unsigned long)adc_update_count);
     OLED_SetTextLine(6U, line);
 #if ADC_ONLY_TEST || BUCK_CONTROL_POWER_STAGE
     OLED_SetTextLine(7U, BuckControl_StateText());

@@ -189,6 +189,7 @@ int main(int argc, char **argv)
         assert(isnan(buck_input_voltage) && isnan(BuckADC_GetInputVoltage()));
         assert(isnan(BuckADC_GetInputVoltageEstimate()) && isnan(BuckADC_GetOutputVoltageEstimate()));
         assert(isnan(BuckADC_GetInputVoltageForDisplay()) && isnan(BuckADC_GetOutputVoltageForDisplay()));
+        assert(isnan(BuckADC_GetOutputVoltageStartupEstimate()));
         if (IS("vref_loss_before") || IS("vref_loss_during"))
         {
             assert(adc_vrefbuf_ready == 0U && (test_vrefbuf.CSR & VREFBUF_CSR_ENVR) == 0U);
@@ -225,6 +226,7 @@ int main(int argc, char **argv)
 #if BUCK_ADC_INTERNAL_REFERENCE_TEST
             assert(BuckADC_GetInputVoltageForDisplay() < 0.0f);
             assert(BuckADC_GetOutputVoltageForDisplay() < 0.0f);
+            assert(BuckADC_GetOutputVoltageStartupEstimate() == buck_output_voltage);
 #else
             assert(isnan(BuckADC_GetInputVoltageForDisplay()) && isnan(BuckADC_GetOutputVoltageForDisplay()));
 #endif
@@ -247,6 +249,7 @@ int main(int argc, char **argv)
 #if BUCK_ADC_INTERNAL_REFERENCE_TEST
                 assert(BuckADC_GetInputVoltageForDisplay() > 0.0f);
                 assert(BuckADC_GetOutputVoltageForDisplay() < 0.0f);
+                assert(BuckADC_GetOutputVoltageStartupEstimate() == buck_output_voltage);
 #else
                 assert(isnan(BuckADC_GetOutputVoltageForDisplay()));
 #endif
@@ -255,6 +258,7 @@ int main(int argc, char **argv)
             {
                 assert(adc_input_sample_valid == 1U && isfinite(BuckADC_GetInputVoltage()));
                 assert(BuckADC_GetOutputVoltageForDisplay() == buck_output_voltage);
+                assert(BuckADC_GetOutputVoltageStartupEstimate() == buck_output_voltage);
             }
             if (IS("fractional_negative"))
             {
@@ -276,6 +280,7 @@ int main(int argc, char **argv)
             assert(adc_sample_valid == 0U && (adc_error_code & BUCK_ADC_ERR_RAIL));
             assert(adc_output_sample_valid == 0U && adc_input_sample_valid == 1U);
             assert(isnan(BuckADC_GetOutputVoltageForDisplay()));
+            assert(isnan(BuckADC_GetOutputVoltageStartupEstimate()));
         }
         else if (IS("input_rail"))
         {
@@ -303,6 +308,7 @@ int main(int argc, char **argv)
                 assert(isnan(BuckADC_GetInputVoltage()));
                 assert(isnan(BuckADC_GetInputVoltageEstimate()) && isnan(BuckADC_GetOutputVoltageEstimate()));
                 assert(isnan(BuckADC_GetInputVoltageForDisplay()) && isnan(BuckADC_GetOutputVoltageForDisplay()));
+                assert(isnan(BuckADC_GetOutputVoltageStartupEstimate()));
                 assert(adc_sample_valid == 0U && (adc_error_code & BUCK_ADC_ERR_STALE));
             }
             if (IS("revoke_reference"))

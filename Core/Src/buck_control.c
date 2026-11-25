@@ -20,6 +20,7 @@ volatile uint32_t buck_control_request, buck_control_pwm_active;
 volatile uint32_t buck_control_hardware_ready;
 volatile uint32_t buck_control_auto_pending;
 volatile uint32_t buck_control_auto_samples, buck_control_auto_wait;
+volatile uint32_t buck_control_startup_negative;
 volatile uint32_t buck_control_feedback_estimate;
 volatile uint32_t buck_control_last_step_ms, buck_control_steps;
 volatile float buck_control_reference, buck_control_error;
@@ -32,11 +33,26 @@ static uint32_t need_reset;
 static uint32_t automatic_permit;
 #if BUCK_CONTROL_AUTO_START
 static uint32_t auto_last_sequence, auto_first_good_ms, auto_last_good_ms;
+static uint32_t startup_started_ms, startup_negative_done;
 #endif
 
 static uint32_t StartPermitted(void)
 {
     return buck_control_hardware_ready == 1U || automatic_permit != 0U;
+}
+
+static uint32_t NegativeStartupPermitted(uint32_t now)
+{
+#if BUCK_CONTROL_AUTO_START
+    if (buck_control_state == BUCK_CONTROL_WAIT_START)
+        return buck_control_auto_pending || automatic_permit;
+    return automatic_permit && !startup_negative_done
+        && buck_control_state == BUCK_CONTROL_SOFT_START
+        && (uint32_t)(now - startup_started_ms) < BUCK_CONTROL_STARTUP_NEGATIVE_MS;
+#else
+    (void)now;
+    return 0U;
+#endif
 }
 
 static void StopOutputs(void)
@@ -52,6 +68,7 @@ static void SetFault(uint32_t reason)
     StopOutputs();
     buck_control_auto_pending = 0U;
     automatic_permit = 0U;
+    buck_control_startup_negative = 0U;
     buck_control_duty = 0.0f;
     buck_control_fault |= reason;
     buck_control_state = BUCK_CONTROL_FAULT;
@@ -68,6 +85,7 @@ static void Snapshot(void)
 static uint32_t ReadFeedback(uint32_t now, uint32_t allow_estimate)
 {
     buck_control_feedback_estimate = 0U;
+    buck_control_startup_negative = 0U;
     if (adc_raw_valid == 0U || (uint32_t)(now - adc_last_sample_ms) > CONTROL_STALE_MS)
     {
         buck_control_vin = NAN;
@@ -81,6 +99,16 @@ static uint32_t ReadFeedback(uint32_t now, uint32_t allow_estimate)
         vin = BuckADC_GetInputVoltageEstimate();
         vout = BuckADC_GetOutputVoltageEstimate();
         buck_control_feedback_estimate = 1U;
+    }
+    if (!isfinite(vout) && allow_estimate && NegativeStartupPermitted(now))
+    {
+        float signed_output = BuckADC_GetOutputVoltageStartupEstimate();
+        if (isfinite(signed_output) && signed_output < 0.0f
+            && signed_output >= -BUCK_PID_STARTUP_NEGATIVE_LIMIT_V)
+        {
+            vout = signed_output;
+            buck_control_startup_negative = 1U;
+        }
     }
     buck_control_vin = vin;
     buck_control_vout = vout;
@@ -100,12 +128,15 @@ void BuckControl_Init(void)
     buck_control_auto_pending = 0U;
     buck_control_auto_samples = 0U;
     buck_control_auto_wait = BUCK_CONTROL_WAIT_ADC;
+    buck_control_startup_negative = 0U;
 #if BUCK_CONTROL_AUTO_START
     buck_control_state = BUCK_CONTROL_WAIT_START;
     buck_control_auto_pending = 1U;
     auto_last_sequence = adc_update_count;
     auto_first_good_ms = 0U;
     auto_last_good_ms = 0U;
+    startup_started_ms = 0U;
+    startup_negative_done = 0U;
 #endif
     buck_control_request = BUCK_CONTROL_CMD_NONE;
     buck_control_last_step_ms = HAL_GetTick();
@@ -169,7 +200,8 @@ static void HandleCommand(uint32_t now)
         return;
     }
     /* Avoid immediately driving the low MOSFET into a charged output. */
-    if (buck_control_vout > CONTROL_START_MAX_VOUT || buck_control_vout < 0.0f)
+    if (buck_control_vout > CONTROL_START_MAX_VOUT
+        || (buck_control_vout < 0.0f && !NegativeStartupPermitted(now)))
     {
         SetFault(BUCK_CONTROL_ERR_PREBIAS);
         return;
@@ -179,7 +211,11 @@ static void HandleCommand(uint32_t now)
         SetFault(controller.fault);
         return;
     }
-    float duty = BuckPID_Step(&controller, &buck_control_config,
+    float duty = NegativeStartupPermitted(now)
+        ? BuckPID_StepStartup(&controller, &buck_control_config,
+                              buck_control_vin, buck_control_vout,
+                              (float)BUCK_ADC_UPDATE_MS * 0.001f, 1U)
+        : BuckPID_Step(&controller, &buck_control_config,
                               buck_control_vin, buck_control_vout,
                               (float)BUCK_ADC_UPDATE_MS * 0.001f, 1U);
     if (controller.fault != 0U)
@@ -194,6 +230,9 @@ static void HandleCommand(uint32_t now)
     }
     buck_control_fault = 0U;
     buck_control_last_step_ms = HAL_GetTick();
+#if BUCK_CONTROL_AUTO_START
+    startup_started_ms = buck_control_last_step_ms;
+#endif
     buck_control_pwm_active = 1U;
     buck_control_state = BUCK_CONTROL_SOFT_START;
     BuckPWM_Start();
@@ -218,7 +257,8 @@ static void ResetAutoQualification(uint32_t reason)
 static void ProcessAutomaticStart(uint32_t now)
 {
     /* Keep PWM off while waiting; neither old frames nor repeated calls
-     * count toward qualification. Negative differential is still invalid. */
+     * count toward qualification. Only the bounded, signed AUTO startup
+     * exception may use a negative output estimate; ADC flags stay invalid. */
     if (!buck_control_auto_pending) return;
     if (!ReadFeedback(now, BUCK_CONTROL_NOMINAL_BENCH))
     {
@@ -230,7 +270,8 @@ static void ProcessAutomaticStart(uint32_t now)
         ResetAutoQualification(BUCK_CONTROL_WAIT_VIN);
         return;
     }
-    if (buck_control_vout < 0.0f || buck_control_vout > CONTROL_START_MAX_VOUT)
+    if (buck_control_vout < -BUCK_PID_STARTUP_NEGATIVE_LIMIT_V
+        || buck_control_vout > CONTROL_START_MAX_VOUT)
     {
         ResetAutoQualification(BUCK_CONTROL_WAIT_VOUT);
         return;
@@ -283,7 +324,21 @@ void BuckControl_Process(uint32_t now)
     uint32_t preview = buck_control_state == BUCK_CONTROL_PREVIEW;
     if (!ReadFeedback(now, preview || BUCK_CONTROL_NOMINAL_BENCH))
     {
-        if (active) SetFault(BUCK_CONTROL_ERR_ADC);
+        if (active)
+        {
+            uint32_t reason = BUCK_CONTROL_ERR_ADC;
+#if BUCK_CONTROL_AUTO_START
+            if (automatic_permit && !startup_negative_done
+                && (uint32_t)(now - startup_started_ms) >= BUCK_CONTROL_STARTUP_NEGATIVE_MS)
+            {
+                /* Diagnostic read only: expired estimates NEVER enter PID. */
+                float signed_output = BuckADC_GetOutputVoltageStartupEstimate();
+                if (isfinite(signed_output) && signed_output < 0.0f)
+                    reason = BUCK_CONTROL_ERR_STARTUP_VOUT;
+            }
+#endif
+            SetFault(reason);
+        }
         else
         {
             need_reset = 1U;
@@ -301,8 +356,15 @@ void BuckControl_Process(uint32_t now)
         dt = (float)BUCK_ADC_UPDATE_MS * 0.001f;
         need_reset = 0U;
     }
-    float duty = BuckPID_Step(&controller, &buck_control_config,
+    float duty = NegativeStartupPermitted(now)
+        ? BuckPID_StepStartup(&controller, &buck_control_config,
+                              buck_control_vin, buck_control_vout, dt, 1U)
+        : BuckPID_Step(&controller, &buck_control_config,
                               buck_control_vin, buck_control_vout, dt, 1U);
+#if BUCK_CONTROL_AUTO_START
+    if (active && buck_control_vout > CONTROL_START_MAX_VOUT)
+        startup_negative_done = 1U;
+#endif
     buck_control_last_step_ms = now;
     ++buck_control_steps;
     if (controller.fault != 0U)
@@ -363,17 +425,21 @@ const char *BuckControl_StateText(void)
             switch (buck_control_auto_wait)
             {
                 case BUCK_CONTROL_WAIT_VIN: return "AUTO WAIT VIN 15-25V";
-                case BUCK_CONTROL_WAIT_VOUT: return "AUTO WAIT VOUT 0-0.5";
+                case BUCK_CONTROL_WAIT_VOUT: return "AUTO WAIT VOUT RANGE";
                 case BUCK_CONTROL_WAIT_QUALIFY: return "AUTO CHECK 1S";
                 default: return "AUTO WAIT ADC";
             }
         case BUCK_CONTROL_PREVIEW: return buck_control_fault != 0U
             ? "PID PREVIEW INVALID" : "PID PREVIEW PWM OFF";
         case BUCK_CONTROL_STOPPED: return "PID STOPPED PWM OFF";
-        case BUCK_CONTROL_SOFT_START: return "PID SOFT START";
+        case BUCK_CONTROL_SOFT_START: return buck_control_startup_negative
+            ? "START NEG TEST <200MS" : "PID SOFT START";
         case BUCK_CONTROL_RUNNING: return buck_control_feedback_estimate
             ? "PID RUN NOMINAL VREF" : "PID RUNNING";
         case BUCK_CONTROL_INHIBITED: return "PID START INHIBITED";
+        case BUCK_CONTROL_FAULT:
+            return buck_control_fault & BUCK_CONTROL_ERR_STARTUP_VOUT
+                ? "START VOUT LOW - OFF" : "PID FAULT PWM OFF";
         default: return "PID FAULT PWM OFF";
     }
 }

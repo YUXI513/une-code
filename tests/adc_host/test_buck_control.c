@@ -15,6 +15,11 @@ float BuckADC_GetInputVoltage(void) { return NAN; }
 float BuckADC_GetOutputVoltage(void) { return NAN; }
 float BuckADC_GetInputVoltageEstimate(void) { return adc_raw_valid ? vin : NAN; }
 float BuckADC_GetOutputVoltageEstimate(void) { return adc_raw_valid ? vout : NAN; }
+float BuckADC_GetOutputVoltageStartupEstimate(void)
+{
+    assert(0); /* Default/manual firmware must never take this exception. */
+    return NAN;
+}
 void BuckPWM_Stop(void) { running = 0U; ++stops; }
 void BuckPWM_Start(void) { running = 1U; ++starts; }
 uint32_t BuckPWM_IsRunning(void) { return running; }
@@ -66,9 +71,11 @@ int main(int argc, char **argv)
     if (strcmp(s, "prebias") == 0) vout = 5.0f;
     if (strcmp(s, "bad_pwm") == 0) reject_duty = 1U;
     if (strcmp(s, "bad_vin") == 0) vin = 14.0f;
+    if (strcmp(s, "negative_start") == 0) vout = -0.02f;
     buck_control_request = BUCK_CONTROL_CMD_START;
     BuckControl_Process(tick);
-    if (strcmp(s, "prebias") == 0 || strcmp(s, "bad_pwm") == 0 || strcmp(s, "bad_vin") == 0)
+    if (strcmp(s, "prebias") == 0 || strcmp(s, "bad_pwm") == 0 || strcmp(s, "bad_vin") == 0
+        || strcmp(s, "negative_start") == 0)
     {
         assert(starts == 0U && buck_control_state == BUCK_CONTROL_FAULT);
         printf("PASS start rejection %s\n", s); return 0;

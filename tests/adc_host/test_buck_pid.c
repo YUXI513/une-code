@@ -95,6 +95,20 @@ int main(void)
     assert(pid.derivative == 0.0f); /* Setpoint ramp has no derivative kick. */
     c.kp = NAN;
     assert(!BuckPID_Reset(&pid, &c));
+    c = BuckPID_DefaultConfig();
+    assert(BuckPID_Reset(&pid, &c));
+    assert(BuckPID_StepStartup(&pid, &c, 20.0f, -0.45f, 0.01f, 1U) > 0.0f);
+    assert(pid.fault == 0U && fabsf(pid.error - 0.50f) < 0.0001f);
+    /* It used the signed -0.45 V, not an artificial zero measurement. */
+    assert(BuckPID_Reset(&pid, &c));
+    assert(BuckPID_StepStartup(&pid, &c, 20.0f, -0.501f, 0.01f, 1U) == 0.0f);
+    assert(pid.fault & BUCK_PID_FAULT_OUTPUT_RANGE);
+    assert(BuckPID_Reset(&pid, &c));
+    assert(BuckPID_Step(&pid, &c, 20.0f, -0.01f, 0.01f, 1U) == 0.0f);
+    assert(pid.fault & BUCK_PID_FAULT_OUTPUT_RANGE);
+    assert(BuckPID_Reset(&pid, &c));
+    assert(BuckPID_StepStartup(&pid, &c, 20.0f, NAN, 0.01f, 1U) == 0.0f);
+    assert(pid.fault & BUCK_PID_FAULT_SAMPLE);
     puts("PASS PID: 15/20/25 V DC models, slow Vin ramp, soft start, slew, feedback sign, anti-windup and latched faults");
     return 0;
 }

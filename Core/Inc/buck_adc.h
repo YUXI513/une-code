@@ -97,6 +97,9 @@ float BuckADC_GetInputVoltage(void);
  * exception. They must never be treated as evidence that hardware is ready. */
 float BuckADC_GetInputVoltageEstimate(void);
 float BuckADC_GetOutputVoltageEstimate(void);
+/* Signed bench-start estimate, not normally valid feedback. Retains negative
+ * values/flags; caller MUST enforce amplitude and startup-time bounds. */
+float BuckADC_GetOutputVoltageStartupEstimate(void);
 
 /* OLED diagnostics only: retain fresh signed readings on NEGATIVE DIFF.
  * Unknown reference is permitted only in the existing nominal bench mode.

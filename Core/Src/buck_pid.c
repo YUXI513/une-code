@@ -63,8 +63,8 @@ static float Fault(BuckPID *pid, uint32_t fault)
     return 0.0f;
 }
 
-float BuckPID_Step(BuckPID *pid, const BuckPIDConfig *c, float vin,
-                   float vout, float dt, uint32_t sample_valid)
+static float Step(BuckPID *pid, const BuckPIDConfig *c, float vin,
+                   float vout, float dt, uint32_t sample_valid, float minimum_output)
 {
     if (pid == NULL) return 0.0f;
     if (pid->fault != 0U) return Fault(pid, 0U);
@@ -78,7 +78,7 @@ float BuckPID_Step(BuckPID *pid, const BuckPIDConfig *c, float vin,
         return Fault(pid, BUCK_PID_FAULT_TIMING);
     if (vin < c->vin_min || vin > c->vin_max)
         return Fault(pid, BUCK_PID_FAULT_INPUT_RANGE);
-    if (vout < 0.0f) return Fault(pid, BUCK_PID_FAULT_OUTPUT_RANGE);
+    if (vout < minimum_output) return Fault(pid, BUCK_PID_FAULT_OUTPUT_RANGE);
     if (vout >= c->output_overvoltage)
         return Fault(pid, BUCK_PID_FAULT_OVERVOLTAGE);
 
@@ -112,4 +112,16 @@ float BuckPID_Step(BuckPID *pid, const BuckPIDConfig *c, float vin,
         return Fault(pid, BUCK_PID_FAULT_NUMERIC);
     pid->duty = Limit(request, lower, upper);
     return pid->duty;
+}
+
+float BuckPID_Step(BuckPID *pid, const BuckPIDConfig *c, float vin,
+                   float vout, float dt, uint32_t sample_valid)
+{
+    return Step(pid, c, vin, vout, dt, sample_valid, 0.0f);
+}
+
+float BuckPID_StepStartup(BuckPID *pid, const BuckPIDConfig *c, float vin,
+                          float vout, float dt, uint32_t sample_valid)
+{
+    return Step(pid, c, vin, vout, dt, sample_valid, -BUCK_PID_STARTUP_NEGATIVE_LIMIT_V);
 }
