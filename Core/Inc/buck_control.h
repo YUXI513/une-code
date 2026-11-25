@@ -9,6 +9,15 @@
 #ifndef BUCK_CONTROL_NOMINAL_BENCH
 #define BUCK_CONTROL_NOMINAL_BENCH 0
 #endif
+#ifndef BUCK_CONTROL_AUTO_START
+#define BUCK_CONTROL_AUTO_START 0
+#endif
+#if BUCK_CONTROL_AUTO_START && !BUCK_CONTROL_POWER_STAGE
+#error "Automatic startup requires a dedicated power-stage controller build"
+#endif
+
+#define BUCK_CONTROL_AUTO_READY_MS 1000U
+#define BUCK_CONTROL_AUTO_READY_SAMPLES 100U
 
 enum
 {
@@ -17,7 +26,16 @@ enum
     BUCK_CONTROL_SOFT_START,
     BUCK_CONTROL_RUNNING,
     BUCK_CONTROL_INHIBITED,
-    BUCK_CONTROL_FAULT
+    BUCK_CONTROL_FAULT,
+    BUCK_CONTROL_WAIT_START
+};
+
+enum
+{
+    BUCK_CONTROL_WAIT_ADC = 1,
+    BUCK_CONTROL_WAIT_VIN,
+    BUCK_CONTROL_WAIT_VOUT,
+    BUCK_CONTROL_WAIT_QUALIFY
 };
 enum
 {
@@ -53,6 +71,13 @@ extern volatile uint32_t buck_control_request, buck_control_pwm_active;
  * setting 1 and requesting START. Reset always disarms it again.
  * A single voltage loop and its slow OVP are NOT overcurrent protection. */
 extern volatile uint32_t buck_control_hardware_ready;
+/* User-requested AUTO build grants software startup permission after fresh,
+ * valid feedback qualifies for 1 s; it does NOT set hardware_ready or certify
+ * real gate timing, load ratings, reference accuracy or current protection.
+ * Manual/default targets retain their original behavior. AUTO never retries
+ * after a running fault, STOP, PREVIEW or CLEAR_FAULT until reset. */
+extern volatile uint32_t buck_control_auto_pending;
+extern volatile uint32_t buck_control_auto_samples, buck_control_auto_wait;
 extern volatile uint32_t buck_control_feedback_estimate;
 extern volatile uint32_t buck_control_last_step_ms, buck_control_steps;
 extern volatile float buck_control_reference, buck_control_error;

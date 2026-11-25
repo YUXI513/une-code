@@ -11,8 +11,9 @@
  * BOTH confirmations below remain OFF until the hardware/reference are
  * verified. Normal control getters remain NAN. Estimate getters provide
  * fresh nominal readings, marked '~' on the OLED. Only the separate,
- * manually armed BUCK_CONTROL_NOMINAL_BENCH build may use these estimates
- * for limited bench control; it does not certify the reference/hardware.
+ * explicit BUCK_CONTROL_NOMINAL_BENCH targets may use these estimates
+ * for limited bench control (manual, or user-requested qualified AUTO).
+ * Neither mode certifies the reference/hardware.
  * Do not externally power VREF+ while running this internal-reference test.
  * VDDA was measured as 3.3 V. Internal 2.5 V requires VDDA >= 2.8 V.
  * Setting the test macro to 0 retains external-reference initialization. */

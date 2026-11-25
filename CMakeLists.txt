@@ -103,3 +103,13 @@ target_compile_definitions(DEMO_BUCK_CONTROL_TEST PRIVATE
     ADC_ONLY_TEST=0 BUCK_CONTROL_POWER_STAGE=1 BUCK_CONTROL_NOMINAL_BENCH=1)
 target_link_libraries(DEMO_BUCK_CONTROL_TEST PRIVATE stm32cubemx STM32_Drivers ${TOOLCHAIN_LINK_LIBRARIES})
 target_link_options(DEMO_BUCK_CONTROL_TEST PRIVATE "-Wl,-Map=DEMO_BUCK_CONTROL_TEST.map")
+
+# User-requested automatic startup: qualified fresh feedback for 1 s, then
+# soft-start once per reset. Running faults latch; no automatic retry.
+# Kept separate from the default ADC preview and original manual bench target.
+add_executable(DEMO_BUCK_CONTROL_AUTO EXCLUDE_FROM_ALL ${DEMO_Application_Sources})
+target_compile_definitions(DEMO_BUCK_CONTROL_AUTO PRIVATE
+    ADC_ONLY_TEST=0 BUCK_CONTROL_POWER_STAGE=1 BUCK_CONTROL_NOMINAL_BENCH=1
+    BUCK_CONTROL_AUTO_START=1)
+target_link_libraries(DEMO_BUCK_CONTROL_AUTO PRIVATE stm32cubemx STM32_Drivers ${TOOLCHAIN_LINK_LIBRARIES})
+target_link_options(DEMO_BUCK_CONTROL_AUTO PRIVATE "-Wl,-Map=DEMO_BUCK_CONTROL_AUTO.map")
