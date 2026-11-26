@@ -13,7 +13,7 @@
 #define BUCK_PWM_DEADTIME_CODE 200U
 
 /* Independent GPIO slew-rate settings for edge/overshoot comparison. */
-#define BUCK_PWM_PA10_SPEED   GPIO_SPEED_FREQ_MEDIUM
+#define BUCK_PWM_PA10_SPEED   GPIO_SPEED_FREQ_LOW
 #define BUCK_PWM_PB15_SPEED   GPIO_SPEED_FREQ_LOW
 
 /* Active-high hardware complementary pair:
