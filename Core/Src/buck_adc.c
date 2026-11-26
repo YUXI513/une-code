@@ -3,7 +3,7 @@
 #include <math.h>
 
 #define ADC_POLL_TIMEOUT_MS  2U
-#define ADC_SEQUENCE_RANKS   9U
+#define ADC_SEQUENCE_RANKS   BUCK_ADC_REGULAR_RANK_COUNT
 #define ADC_MAX_RAW          4095U
 
 volatile uint32_t adc_raw_plus, adc_raw_minus;
@@ -30,6 +30,7 @@ volatile uint32_t adc_reference_hardware_confirmed = BUCK_ADC_REFERENCE_HARDWARE
 
 static ADC_HandleTypeDef hadc1;
 static uint32_t adc_initialized;
+static uint32_t adc_pwm_synchronized;
 static uint32_t init_error;
 
 static void InvalidateVoltages(void)
@@ -204,7 +205,10 @@ HAL_StatusTypeDef BuckADC_Init(void)
     hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
     hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
     /* DR reads release the next rank, so polling cannot lose U+ to U-. */
-    hadc1.Init.LowPowerAutoWait = ENABLE;
+    /* At the shortened acquisition time each rank finishes in <2 us. Let
+     * hardware advance ranks without software gaps so the sequence fits in
+     * a quiet PWM plateau. Polling still reads DR after each EOC. */
+    hadc1.Init.LowPowerAutoWait = DISABLE;
     hadc1.Init.ContinuousConvMode = DISABLE;
     hadc1.Init.NbrOfConversion = ADC_SEQUENCE_RANKS;
     hadc1.Init.DiscontinuousConvMode = DISABLE;
@@ -235,7 +239,7 @@ HAL_StatusTypeDef BuckADC_Init(void)
         init_error = BUCK_ADC_ERR_CALIBRATION;
         return Fail(init_error, status);
     }
-    channel.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+    channel.SamplingTime = ADC_SAMPLETIME_24CYCLES_5;
     channel.SingleDiff = ADC_SINGLE_ENDED;
     channel.OffsetNumber = ADC_OFFSET_NONE;
     channel.Offset = 0U;
@@ -260,7 +264,26 @@ HAL_StatusTypeDef BuckADC_Init(void)
     HAL_Delay(1U);
     init_error = 0U;
     adc_initialized = 1U;
+    adc_pwm_synchronized = 0U;
     adc_last_hal_status = HAL_OK;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef BuckADC_UsePWMSynchronizedTrigger(void)
+{
+    uint32_t cfgr;
+
+    if (adc_initialized == 0U || adc_pwm_synchronized != 0U)
+        return adc_initialized != 0U ? HAL_OK : HAL_ERROR;
+    if ((READ_BIT(hadc1.Instance->CR, ADC_CR_ADSTART | ADC_CR_ADSTP)) != 0U)
+        return HAL_BUSY;
+
+    /* Arm each regular sequence on TIM1_CH4's quiet-phase TRGO2 event. */
+    cfgr = hadc1.Instance->CFGR;
+    cfgr &= ~(ADC_CFGR_EXTSEL_Msk | ADC_CFGR_EXTEN_Msk);
+    cfgr |= ADC_EXTERNALTRIG_T1_TRGO2 | ADC_EXTERNALTRIGCONVEDGE_RISING;
+    hadc1.Instance->CFGR = cfgr;
+    adc_pwm_synchronized = 1U;
     return HAL_OK;
 }
 

@@ -241,6 +241,11 @@ int main(void)
 #if !ADC_ONLY_TEST
   /* Only compiled after explicitly selecting ADC_ONLY_TEST=OFF. */
   BuckPWM_Start();
+  if (BuckPWM_IsRunning() != 0U && BuckADC_UsePWMSynchronizedTrigger() != HAL_OK)
+  {
+    BuckPWM_Stop();
+    Error_Handler();
+  }
 #endif
   uint32_t sample_tick = HAL_GetTick();
   uint32_t display_tick = sample_tick;

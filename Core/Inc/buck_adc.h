@@ -2,6 +2,7 @@
 #define BUCK_ADC_H
 
 #include "stm32g4xx_hal.h"
+#include "buck_timing.h"
 
 /* No jumper: bench-test the INTERNAL 2.5 V reference; default PWM is OFF.
  * The actual Cref+ capacitor is unknown (schematic: 2.2 uF, outside the
@@ -38,7 +39,6 @@
 #define BUCK_ADC_OUTPUT_DIVIDER_RATIO 40.0f
 #define BUCK_ADC_UPDATE_MS            10U
 #define BUCK_ADC_AVERAGE_COUNT        16U
-
 /* Bitmask: reference unknown is expected until the hardware is confirmed. */
 #define BUCK_ADC_ERR_REFERENCE        (1UL << 0)
 #define BUCK_ADC_ERR_INIT             (1UL << 1)
@@ -89,6 +89,7 @@ extern volatile uint32_t adc_reference_confirmed, adc_reference_hardware_confirm
  * Call from main context only, with SysTick running. No IRQ/DMA is used. */
 HAL_StatusTypeDef BuckADC_Init(void);
 HAL_StatusTypeDef BuckADC_ReadVoltage(void);
+HAL_StatusTypeDef BuckADC_UsePWMSynchronizedTrigger(void);
 uint32_t BuckADC_GetRawPlus(void);
 uint32_t BuckADC_GetRawMinus(void);
 float BuckADC_GetDifferentialVoltage(void);
