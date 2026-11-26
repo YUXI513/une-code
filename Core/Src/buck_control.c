@@ -59,6 +59,21 @@ static uint32_t NegativeStartupPermitted(uint32_t now)
 #endif
 }
 
+static uint32_t NegativeFeedbackPermitted(uint32_t now)
+{
+    if (NegativeStartupPermitted(now)) return 1U;
+#if BUCK_CONTROL_AUTO_START
+    /* During active AUTO tracking, keep the same bounded signed-VOUT
+     * allowance. A small negative differential then raises PID error and
+     * recovers the output instead of immediately latching an ADC/PID fault. */
+    return automatic_permit != 0U && buck_control_pwm_active != 0U
+        && (buck_control_state == BUCK_CONTROL_SOFT_START
+            || buck_control_state == BUCK_CONTROL_RUNNING);
+#else
+    return 0U;
+#endif
+}
+
 static void StopOutputs(void)
 {
 #if BUCK_CONTROL_POWER_STAGE
@@ -142,14 +157,14 @@ static uint32_t ReadFeedback(uint32_t now, uint32_t allow_estimate)
         vout = BuckADC_GetOutputVoltageEstimate();
         buck_control_feedback_estimate = 1U;
     }
-    if (!isfinite(vout) && allow_estimate && NegativeStartupPermitted(now))
+    if (!isfinite(vout) && allow_estimate && NegativeFeedbackPermitted(now))
     {
         float signed_output = BuckADC_GetOutputVoltageStartupEstimate();
         if (isfinite(signed_output) && signed_output < 0.0f
             && signed_output >= -BUCK_PID_STARTUP_NEGATIVE_LIMIT_V)
         {
             vout = signed_output;
-            buck_control_startup_negative = 1U;
+            buck_control_startup_negative = NegativeStartupPermitted(now);
         }
     }
     buck_control_vin = vin;
@@ -407,7 +422,7 @@ void BuckControl_Process(uint32_t now)
         dt = (float)BUCK_ADC_UPDATE_MS * 0.001f;
         need_reset = 0U;
     }
-    float duty = NegativeStartupPermitted(now)
+    float duty = NegativeFeedbackPermitted(now)
         ? BuckPID_StepStartup(&controller, &buck_control_config,
                               buck_control_vin, buck_control_vout, dt, 1U)
         : BuckPID_Step(&controller, &buck_control_config,
