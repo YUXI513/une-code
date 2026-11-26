@@ -33,6 +33,7 @@ static BuckPID controller;
 static uint32_t last_sequence;
 static uint32_t need_reset;
 static uint32_t automatic_permit;
+static uint32_t feedback_error;
 #if BUCK_CONTROL_AUTO_START
 static uint32_t auto_last_sequence, auto_first_good_ms, auto_last_good_ms;
 static uint32_t startup_started_ms, startup_negative_done;
@@ -74,6 +75,9 @@ static void SetFault(uint32_t reason)
         uint32_t now = HAL_GetTick();
         buck_control_fault_snapshot.control_error = buck_control_fault | reason;
         buck_control_fault_snapshot.source_state = source_state;
+        buck_control_fault_snapshot.feedback_error =
+            (reason & (BUCK_CONTROL_ERR_ADC | BUCK_CONTROL_ERR_STARTUP_VOUT))
+                ? feedback_error : 0U;
         buck_control_fault_snapshot.input_error = adc_input_error_code;
         buck_control_fault_snapshot.output_error = adc_output_error_code;
         buck_control_fault_snapshot.raw_valid = adc_raw_valid;
@@ -113,7 +117,11 @@ static uint32_t ReadFeedback(uint32_t now, uint32_t allow_estimate)
 {
     buck_control_feedback_estimate = 0U;
     buck_control_startup_negative = 0U;
-    if (adc_raw_valid == 0U || (uint32_t)(now - adc_last_sample_ms) > CONTROL_STALE_MS)
+    feedback_error = 0U;
+    if (adc_raw_valid == 0U) feedback_error |= BUCK_CONTROL_FEEDBACK_NO_RAW;
+    if ((uint32_t)(now - adc_last_sample_ms) > CONTROL_STALE_MS)
+        feedback_error |= BUCK_CONTROL_FEEDBACK_STALE;
+    if (feedback_error != 0U)
     {
         buck_control_vin = NAN;
         buck_control_vout = NAN;
@@ -139,12 +147,15 @@ static uint32_t ReadFeedback(uint32_t now, uint32_t allow_estimate)
     }
     buck_control_vin = vin;
     buck_control_vout = vout;
-    return isfinite(vin) && isfinite(vout);
+    if (!isfinite(vin)) feedback_error |= BUCK_CONTROL_FEEDBACK_VIN;
+    if (!isfinite(vout)) feedback_error |= BUCK_CONTROL_FEEDBACK_VOUT;
+    return feedback_error == 0U;
 }
 
 void BuckControl_Init(void)
 {
     StopOutputs();
+    feedback_error = 0U;
     buck_control_config = BuckPID_DefaultConfig();
     (void)BuckPID_Reset(&controller, &buck_control_config);
     buck_control_state = BUCK_CONTROL_PREVIEW;
@@ -204,6 +215,7 @@ static void HandleCommand(uint32_t now)
         buck_control_async_fault = 0U;
         buck_control_fault_snapshot.valid = 0U;
         buck_control_state = BUCK_CONTROL_STOPPED;
+        feedback_error = 0U;
         buck_control_duty = 0.0f;
         need_reset = 1U;
         return;
@@ -469,8 +481,12 @@ const char *BuckControl_StateText(void)
             ? "PID RUN NOMINAL VREF" : "PID RUNNING";
         case BUCK_CONTROL_INHIBITED: return "PID START INHIBITED";
         case BUCK_CONTROL_FAULT:
-            return buck_control_fault & BUCK_CONTROL_ERR_STARTUP_VOUT
-                ? "START VOUT LOW - OFF" : "PID FAULT PWM OFF";
+            if (buck_control_fault & BUCK_CONTROL_ERR_STARTUP_VOUT)
+                return "START VOUT LOW - OFF";
+            if ((buck_control_fault & BUCK_CONTROL_ERR_ADC)
+                && (buck_control_fault_snapshot.feedback_error & BUCK_CONTROL_FEEDBACK_STALE))
+                return "ADC DATA STALE - OFF";
+            return "PID FAULT PWM OFF";
         default: return "PID FAULT PWM OFF";
     }
 }

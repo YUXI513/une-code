@@ -57,6 +57,16 @@ enum
     BUCK_CONTROL_ERR_STARTUP_VOUT = 1U << 14
 };
 
+/* Why feedback was rejected; separate from low-level ADC conversion flags.
+ * A healthy raw frame can still be too old for the controller. */
+enum
+{
+    BUCK_CONTROL_FEEDBACK_NO_RAW = 1U << 0,
+    BUCK_CONTROL_FEEDBACK_STALE = 1U << 1,
+    BUCK_CONTROL_FEEDBACK_VIN = 1U << 2,
+    BUCK_CONTROL_FEEDBACK_VOUT = 1U << 3
+};
+
 extern BuckPIDConfig buck_control_config;
 extern volatile uint32_t buck_control_state, buck_control_fault;
 extern volatile uint32_t buck_control_async_fault;
@@ -87,7 +97,7 @@ extern volatile uint32_t buck_control_startup_negative;
 
 typedef struct
 {
-    uint32_t valid, control_error, source_state;
+    uint32_t valid, control_error, source_state, feedback_error;
     uint32_t input_error, output_error, raw_valid;
     uint32_t input_raw_plus, input_raw_minus, output_raw_plus, output_raw_minus;
     uint32_t elapsed_ms, sample_age_ms, start_attempts, negative_permitted;

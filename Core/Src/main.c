@@ -214,8 +214,11 @@ static void App_UpdateVoltageDisplay(void)
                            (fault->input_error & BUCK_ADC_ERR_REFERENCE) != 0U);
         App_SetVoltageLine(1U, "F VOUT", fault->output_voltage,
                            (fault->output_error & BUCK_ADC_ERR_REFERENCE) != 0U);
-        snprintf(line, sizeof(line), "TRY:%lu T:%luMS",
-                 (unsigned long)fault->start_attempts, (unsigned long)fault->elapsed_ms);
+        /* Show controller rejection separately from raw ADC diagnostics.
+         * Elapsed time/start count remain in the debugger fault snapshot. */
+        snprintf(line, sizeof(line), "AGE:%lu FB:%02lX",
+                 (unsigned long)fault->sample_age_ms,
+                 (unsigned long)(fault->feedback_error & 0x0FU));
         OLED_SetTextLine(2U, line);
         if (fault->raw_valid)
         {

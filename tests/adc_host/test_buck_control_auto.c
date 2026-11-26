@@ -193,6 +193,7 @@ int main(int argc, char **argv)
     {
         QualifyAndStart();
         if (IS("adc_loss")) { adc_raw_valid = 0U; Sample(); }
+        else if (IS("feedback_vin_invalid")) { vin = NAN; Sample(); }
         else if (IS("negative_running"))
         {
             vout = 0.60f; Sample(); /* Close the exception before 200 ms. */
@@ -200,6 +201,25 @@ int main(int argc, char **argv)
             vout = -0.02f; Sample();
         }
         else if (IS("overvoltage")) { vout = 11.1f; Sample(); }
+        else if (IS("feedback_age"))
+        {
+            vin = 21.0f; vout = 6.5f; Sample();
+            tick += 30U;
+            BuckControl_Process(tick); /* Exactly 30 ms is still accepted. */
+            assert(running == 1U);
+            ++tick;
+            BuckControl_Process(tick); /* Positive but 31-ms-old feedback. */
+            assert(buck_control_fault == BUCK_CONTROL_ERR_ADC);
+            assert(buck_control_fault_snapshot.raw_valid == 1U);
+            assert(buck_control_fault_snapshot.input_error == BUCK_ADC_ERR_REFERENCE);
+            assert(buck_control_fault_snapshot.output_error == BUCK_ADC_ERR_REFERENCE);
+            assert(buck_control_fault_snapshot.sample_age_ms == 31U);
+            assert(buck_control_fault_snapshot.feedback_error == BUCK_CONTROL_FEEDBACK_STALE);
+            assert(strcmp(BuckControl_StateText(), "ADC DATA STALE - OFF") == 0);
+            assert(fabsf(buck_control_fault_snapshot.input_voltage - 21.0f) < 0.001f);
+            assert(fabsf(buck_control_fault_snapshot.output_voltage - 6.5f) < 0.001f);
+            puts("REPRO: positive VIN/VOUT, FI/FO=0001, age=31 ms -> PID ERR=0100");
+        }
         else if (IS("watchdog"))
         {
             tick += 31U;
@@ -237,6 +257,14 @@ int main(int argc, char **argv)
     BuckControlFaultSnapshot first = buck_control_fault_snapshot;
     assert(first.control_error == buck_control_fault);
     assert(first.start_attempts == starts);
+    if (IS("adc_loss"))
+        assert(first.feedback_error == BUCK_CONTROL_FEEDBACK_NO_RAW);
+    if (IS("negative_running"))
+        assert(first.feedback_error == BUCK_CONTROL_FEEDBACK_VOUT);
+    if (IS("feedback_vin_invalid"))
+        assert(first.feedback_error == BUCK_CONTROL_FEEDBACK_VIN);
+    if (IS("watchdog") || IS("overvoltage"))
+        assert(first.feedback_error == 0U);
     if (IS("startup_drop_below_limit"))
     {
         assert(first.output_error == (BUCK_ADC_ERR_REFERENCE | BUCK_ADC_ERR_NEGATIVE));
@@ -256,6 +284,8 @@ int main(int argc, char **argv)
     assert(buck_control_fault_snapshot.control_error == first.control_error);
     assert(buck_control_fault_snapshot.output_error == first.output_error);
     assert(buck_control_fault_snapshot.elapsed_ms == first.elapsed_ms);
+    assert(buck_control_fault_snapshot.sample_age_ms == first.sample_age_ms);
+    assert(buck_control_fault_snapshot.feedback_error == first.feedback_error);
     assert(isnan(first.output_voltage) ? isnan(buck_control_fault_snapshot.output_voltage)
         : buck_control_fault_snapshot.output_voltage == first.output_voltage);
     buck_control_request = BUCK_CONTROL_CMD_CLEAR_FAULT;
