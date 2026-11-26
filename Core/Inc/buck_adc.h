@@ -82,6 +82,23 @@ extern volatile uint32_t adc_vrefbuf_fault_csr;
 extern volatile float adc_reference_voltage, adc_vdda_voltage;
 extern volatile uint32_t adc_reference_confirmed, adc_reference_hardware_confirmed;
 
+typedef struct {
+    uint32_t minimum, maximum, zero_count, full_count, samples;
+} BuckADCRawStats;
+
+typedef struct {
+    uint32_t valid, timestamp_ms, batch_number, frame_number;
+    uint32_t raw[4]; /* First full-scale frame: PA0, PA1, PA2, PA3. */
+    BuckADCRawStats input_stats[2]; /* Triggering batch ranges/counts. */
+    uint32_t hal_status, error_code;
+} BuckADCFirstInputFull;
+
+/* Diagnostic only: retained input endpoint totals and first full-scale frame. */
+extern volatile BuckADCRawStats adc_input_stats[2];
+extern volatile uint32_t adc_input_full_total[2], adc_input_zero_total[2];
+extern volatile uint32_t adc_diagnostic_batches;
+extern volatile BuckADCFirstInputFull adc_first_input_full;
+
 /* HAL_OK from ReadVoltage means all four fresh raw readings were acquired.
  * adc_sample_valid requires BOTH voltage pairs valid. Each voltage getter
  * checks its own pair validity and freshness; unknown reference,

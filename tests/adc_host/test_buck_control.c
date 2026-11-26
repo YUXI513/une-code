@@ -87,7 +87,14 @@ int main(int argc, char **argv)
     }
     assert(starts == 1U && running == 1U && buck_control_pwm_active == 1U);
     assert(buck_control_state == BUCK_CONTROL_SOFT_START);
-    if (strcmp(s, "overvoltage") == 0) { vout = buck_control_config.output_overvoltage; Sample(); }
+    if (strcmp(s, "overvoltage") == 0)
+    {
+        vout = 14.0f;
+        Sample();
+        assert(running == 1U && buck_control_pwm_active == 1U);
+        puts("PASS no absolute output overvoltage trip");
+        return 0;
+    }
     else if (strcmp(s, "adc_loss") == 0) { adc_raw_valid = 0U; Sample(); }
     else if (strcmp(s, "withdraw_ready") == 0) { buck_control_hardware_ready = 0U; Sample(); }
     else if (strcmp(s, "pwm_loss") == 0) { running = 0U; Sample(); }

@@ -27,10 +27,74 @@ volatile float adc_reference_voltage = BUCK_ADC_REFERENCE_VOLTS;
 volatile float adc_vdda_voltage = BUCK_ADC_VDDA_VOLTS;
 volatile uint32_t adc_reference_confirmed = BUCK_ADC_REFERENCE_CONFIRMED;
 volatile uint32_t adc_reference_hardware_confirmed = BUCK_ADC_REFERENCE_HARDWARE_CONFIRMED;
+volatile BuckADCRawStats adc_input_stats[2];
+volatile uint32_t adc_input_full_total[2], adc_input_zero_total[2];
+volatile uint32_t adc_diagnostic_batches;
+volatile BuckADCFirstInputFull adc_first_input_full;
 
 static ADC_HandleTypeDef hadc1;
 static uint32_t adc_initialized;
 static uint32_t init_error;
+static uint32_t first_full_batch_active;
+
+static void IncrementDiagnostic(volatile uint32_t *count)
+{
+    if (*count != UINT32_MAX) ++*count;
+}
+
+static void BeginInputDiagnosticBatch(void)
+{
+    first_full_batch_active = 0U;
+    IncrementDiagnostic(&adc_diagnostic_batches);
+    for (uint32_t channel = 0U; channel < 2U; ++channel)
+        adc_input_stats[channel] = (BuckADCRawStats){ADC_MAX_RAW, 0U, 0U, 0U, 0U};
+}
+
+static void RecordInputFrame(const uint32_t values[4], uint32_t frame_number)
+{
+    for (uint32_t channel = 0U; channel < 2U; ++channel)
+    {
+        volatile BuckADCRawStats *stats = &adc_input_stats[channel];
+        uint32_t raw = values[channel];
+        if (raw < stats->minimum) stats->minimum = raw;
+        if (raw > stats->maximum) stats->maximum = raw;
+        ++stats->samples;
+        if (raw == 0U)
+        {
+            ++stats->zero_count;
+            IncrementDiagnostic(&adc_input_zero_total[channel]);
+        }
+        if (raw == ADC_MAX_RAW)
+        {
+            ++stats->full_count;
+            IncrementDiagnostic(&adc_input_full_total[channel]);
+        }
+    }
+    if (!adc_first_input_full.valid
+        && (values[0] == ADC_MAX_RAW || values[1] == ADC_MAX_RAW))
+    {
+        adc_first_input_full.timestamp_ms = HAL_GetTick();
+        adc_first_input_full.batch_number = adc_diagnostic_batches;
+        adc_first_input_full.frame_number = frame_number;
+        for (uint32_t channel = 0U; channel < 4U; ++channel)
+            adc_first_input_full.raw[channel] = values[channel];
+        adc_first_input_full.hal_status = HAL_BUSY;
+        first_full_batch_active = 1U;
+        adc_first_input_full.valid = 1U;
+    }
+    if (first_full_batch_active)
+        for (uint32_t channel = 0U; channel < 2U; ++channel)
+            adc_first_input_full.input_stats[channel] = adc_input_stats[channel];
+}
+
+static void FinishInputDiagnosticBatch(HAL_StatusTypeDef status, uint32_t error)
+{
+    if (first_full_batch_active)
+    {
+        adc_first_input_full.hal_status = (uint32_t)status;
+        adc_first_input_full.error_code = error;
+    }
+}
 
 static void InvalidateVoltages(void)
 {
@@ -329,6 +393,7 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
     uint32_t batch_started = HAL_GetTick();
     uint32_t sums[4] = {0U};
     uint32_t reason = 0U, input_rail = 0U, output_rail = 0U;
+    BeginInputDiagnosticBatch();
     adc_raw_valid = 0U;
     InvalidateVoltages();
     adc_error_code = ReferenceValid() ? 0U : BUCK_ADC_ERR_REFERENCE;
@@ -344,7 +409,12 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
     {
         uint32_t values[4] = {0U};
         HAL_StatusTypeDef status = ReadFrame(values, &reason);
-        if (status != HAL_OK) return Fail(reason, status);
+        if (status != HAL_OK)
+        {
+            FinishInputDiagnosticBatch(status, reason | adc_error_code | input_rail | output_rail);
+            return Fail(reason, status);
+        }
+        RecordInputFrame(values, sample + 1U);
         /* Check individual readings: averaging must not hide clipped data. */
         for (uint32_t index = 0U; index < 4U; ++index)
         {
@@ -357,9 +427,15 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
         }
     }
     if ((uint32_t)(HAL_GetTick() - batch_started) >= BUCK_ADC_UPDATE_MS)
+    {
+        FinishInputDiagnosticBatch(HAL_TIMEOUT, BUCK_ADC_ERR_STALE | adc_error_code | input_rail | output_rail);
         return Fail(BUCK_ADC_ERR_STALE, HAL_TIMEOUT);
+    }
     if (!ReferenceModeHealthy())
+    {
+        FinishInputDiagnosticBatch(HAL_ERROR, BUCK_ADC_ERR_VREFBUF_READY | adc_error_code | input_rail | output_rail);
         return ReferenceFault(BUCK_ADC_ERR_VREFBUF_READY, HAL_ERROR);
+    }
     adc_input_raw_plus = (sums[0] + BUCK_ADC_AVERAGE_COUNT / 2U) / BUCK_ADC_AVERAGE_COUNT;
     adc_input_raw_minus = (sums[1] + BUCK_ADC_AVERAGE_COUNT / 2U) / BUCK_ADC_AVERAGE_COUNT;
     adc_raw_plus = (sums[2] + BUCK_ADC_AVERAGE_COUNT / 2U) / BUCK_ADC_AVERAGE_COUNT;
@@ -399,6 +475,7 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
         && (adc_output_error_code & ~BUCK_ADC_ERR_REFERENCE) == 0U;
     adc_error_code = adc_input_error_code | adc_output_error_code;
     adc_sample_valid = adc_error_code == 0U ? 1U : 0U;
+    FinishInputDiagnosticBatch(HAL_OK, adc_error_code);
     return HAL_OK;
 }
 

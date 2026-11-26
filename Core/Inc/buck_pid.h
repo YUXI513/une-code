@@ -15,7 +15,6 @@ typedef struct
     float soft_start_volts_per_s;
     float duty_slew_per_s;
     float derivative_filter_s;
-    float output_overvoltage; /* Absolute output limit, independent of VIN. */
     float maximum_step_s;
 } BuckPIDConfig;
 
@@ -35,7 +34,6 @@ enum
     BUCK_PID_FAULT_SAMPLE = 1U << 1,
     BUCK_PID_FAULT_INPUT_NONPOSITIVE = 1U << 2,
     BUCK_PID_FAULT_OUTPUT_RANGE = 1U << 3,
-    BUCK_PID_FAULT_OVERVOLTAGE = 1U << 4,
     BUCK_PID_FAULT_TIMING = 1U << 5,
     BUCK_PID_FAULT_NUMERIC = 1U << 6
 };

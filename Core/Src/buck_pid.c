@@ -19,7 +19,6 @@ static uint32_t ConfigValid(const BuckPIDConfig *c)
         && isfinite(c->soft_start_volts_per_s) && c->soft_start_volts_per_s > 0.0f
         && isfinite(c->duty_slew_per_s) && c->duty_slew_per_s > 0.0f
         && isfinite(c->derivative_filter_s) && c->derivative_filter_s > 0.0f
-        && isfinite(c->output_overvoltage) && c->output_overvoltage > 0.0f
         && isfinite(c->maximum_step_s) && c->maximum_step_s > 0.0f;
 }
 
@@ -29,14 +28,12 @@ BuckPIDConfig BuckPID_DefaultConfig(void)
      * load resistance, ESR, saturation current and current limit unknown.
      * Provisional SLOW bench values, NOT a tuned LC compensator. Nominal
      * 100 Hz execution; retain Kd=0 (PI) until plant/waveforms are measured.
-     * Track half VIN; only a finite positive VIN is required for division.
-     * Absolute output OVP remains independent of the moving reference. */
+     * Track half VIN; only a finite positive VIN is required for division. */
     BuckPIDConfig c = {
         .output_ratio = 0.5f, .kp = 0.005f, .ki = 0.05f, .kd = 0.0f,
         .duty_min = 0.08f, .duty_max = 0.80f, .integral_limit = 0.30f,
         .soft_start_volts_per_s = 5.0f, .duty_slew_per_s = 0.50f,
-        .derivative_filter_s = 0.02f,
-        .output_overvoltage = 13.75f, .maximum_step_s = 0.030f
+        .derivative_filter_s = 0.02f, .maximum_step_s = 0.030f
     };
     return c;
 }
@@ -82,9 +79,6 @@ static float Step(BuckPID *pid, const BuckPIDConfig *c, float vin,
     if (!isfinite(pid->target_voltage) || pid->target_voltage <= 0.0f)
         return Fault(pid, BUCK_PID_FAULT_NUMERIC);
     if (vout < minimum_output) return Fault(pid, BUCK_PID_FAULT_OUTPUT_RANGE);
-    if (vout >= c->output_overvoltage)
-        return Fault(pid, BUCK_PID_FAULT_OVERVOLTAGE);
-
     if (!pid->soft_start_complete)
     {
         pid->reference = fminf(pid->target_voltage,

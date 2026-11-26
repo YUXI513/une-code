@@ -98,9 +98,9 @@ int main(void)
     assert(BuckPID_Step(&pid, &c, 20.0f, 10.5f, 0.01f, 1U) < 0.5f);
 
     assert(BuckPID_Reset(&pid, &c));
-    assert(BuckPID_Step(&pid, &c, 20.0f, c.output_overvoltage, 0.01f, 1U) == 0.0f);
-    assert(pid.fault & BUCK_PID_FAULT_OVERVOLTAGE);
-    assert(BuckPID_Step(&pid, &c, 20.0f, 9.0f, 0.01f, 1U) == 0.0f);
+    /* Absolute output overvoltage trip removed by user request. */
+    assert(BuckPID_Step(&pid, &c, 20.0f, 14.0f, 0.01f, 1U) > 0.0f);
+    assert(pid.fault == 0U && pid.target_voltage == 10.0f);
     assert(BuckPID_Reset(&pid, &c));
     assert(BuckPID_Step(&pid, &c, 0.0f, 0.0f, 0.01f, 1U) == 0.0f);
     assert(pid.fault & BUCK_PID_FAULT_INPUT_NONPOSITIVE);
@@ -141,8 +141,6 @@ int main(void)
     c.output_ratio = 1.0f;
     assert(!BuckPID_Reset(&pid, &c));
     c.output_ratio = NAN;
-    assert(!BuckPID_Reset(&pid, &c));
-    c = BuckPID_DefaultConfig(); c.output_overvoltage = 0.0f;
     assert(!BuckPID_Reset(&pid, &c));
     c = BuckPID_DefaultConfig();
     assert(BuckPID_Reset(&pid, &c));

@@ -230,7 +230,14 @@ int main(int argc, char **argv)
             assert(running == 1U);
             vout = -0.02f; Sample();
         }
-        else if (IS("overvoltage")) { vout = buck_control_config.output_overvoltage; Sample(); }
+        else if (IS("overvoltage"))
+        {
+            vout = 14.0f;
+            Sample();
+            assert(buck_control_pwm_active == 1U && running == 1U);
+            puts("PASS no absolute output overvoltage trip");
+            return 0;
+        }
         else if (IS("feedback_age"))
         {
             vin = 21.0f; vout = 6.5f; Sample();

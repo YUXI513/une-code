@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
   <!-- USER-REQUESTED AUTO START: qualified feedback for 1 s, then PWM starts.
        Target VOUT=VIN/2; no 15..25 V input window. Positive VIN required.
-       Output OVP is 13.75 V. Download/reset can activate the power stage.
+       No fixed output overvoltage trip. Download/reset can activate the power stage.
        Running faults latch.
        Bench startup accepts signed VOUT down to -0.50 V for at most 200 ms;
        raw ADC flags remain diagnostic. This is not zero calibration. -->

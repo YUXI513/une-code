@@ -81,7 +81,7 @@ extern volatile uint32_t buck_control_request, buck_control_pwm_active;
 /* Stays 0: operator must verify the actual gate dead times across the duty
  * range, correct feedback, a known load and a current-limited supply before
  * setting 1 and requesting START. Reset always disarms it again.
- * A single voltage loop and its slow OVP are NOT overcurrent protection. */
+ * A single voltage loop is NOT overcurrent protection. */
 extern volatile uint32_t buck_control_hardware_ready;
 /* User-requested AUTO build grants software startup permission after fresh,
  * valid feedback qualifies for 1 s; it does NOT set hardware_ready or certify
