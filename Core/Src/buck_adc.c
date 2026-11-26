@@ -50,7 +50,8 @@ static void BeginInputDiagnosticBatch(void)
         adc_input_stats[channel] = (BuckADCRawStats){ADC_MAX_RAW, 0U, 0U, 0U, 0U};
 }
 
-static void RecordInputFrame(const uint32_t values[4], uint32_t frame_number)
+static void RecordInputFrame(const uint32_t values[4], const uint32_t rank_raw[ADC_SEQUENCE_RANKS],
+                             uint32_t frame_number)
 {
     for (uint32_t channel = 0U; channel < 2U; ++channel)
     {
@@ -78,6 +79,8 @@ static void RecordInputFrame(const uint32_t values[4], uint32_t frame_number)
         adc_first_input_full.frame_number = frame_number;
         for (uint32_t channel = 0U; channel < 4U; ++channel)
             adc_first_input_full.raw[channel] = values[channel];
+        for (uint32_t rank = 0U; rank < ADC_SEQUENCE_RANKS; ++rank)
+            adc_first_input_full.rank_raw[rank] = rank_raw[rank];
         adc_first_input_full.hal_status = HAL_BUSY;
         first_full_batch_active = 1U;
         adc_first_input_full.valid = 1U;
@@ -328,7 +331,8 @@ HAL_StatusTypeDef BuckADC_Init(void)
     return HAL_OK;
 }
 
-static HAL_StatusTypeDef ReadFrame(uint32_t values[4], uint32_t *reason)
+static HAL_StatusTypeDef ReadFrame(uint32_t values[4], uint32_t rank_raw[ADC_SEQUENCE_RANKS],
+                                   uint32_t *reason)
 {
     uint32_t started = HAL_GetTick();
     HAL_StatusTypeDef status = HAL_ADC_Start(&hadc1);
@@ -360,6 +364,7 @@ static HAL_StatusTypeDef ReadFrame(uint32_t values[4], uint32_t *reason)
             break;
         }
         uint32_t value = HAL_ADC_GetValue(&hadc1);
+        rank_raw[rank] = value;
         /* Keep ranks 2/4/6/8, in PA0/PA1/PA2/PA3 order. */
         if ((rank & 1U) != 0U) values[(rank - 1U) / 2U] = value;
         if (value > ADC_MAX_RAW)
@@ -408,13 +413,14 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
     for (uint32_t sample = 0U; sample < BUCK_ADC_AVERAGE_COUNT; ++sample)
     {
         uint32_t values[4] = {0U};
-        HAL_StatusTypeDef status = ReadFrame(values, &reason);
+        uint32_t rank_raw[ADC_SEQUENCE_RANKS] = {0U};
+        HAL_StatusTypeDef status = ReadFrame(values, rank_raw, &reason);
         if (status != HAL_OK)
         {
             FinishInputDiagnosticBatch(status, reason | adc_error_code | input_rail | output_rail);
             return Fail(reason, status);
         }
-        RecordInputFrame(values, sample + 1U);
+        RecordInputFrame(values, rank_raw, sample + 1U);
         /* Check individual readings: averaging must not hide clipped data. */
         for (uint32_t index = 0U; index < 4U; ++index)
         {

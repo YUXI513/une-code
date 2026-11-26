@@ -192,18 +192,28 @@ static void App_UpdateVoltageDisplay(void)
     OLED_SetTextLine(5U, line);
     /* Keep acquisition visible; the half-input controller also shows its
      * current, unsmoothed final target once valid feedback has been used. */
+#if ADC_ONLY_TEST
+    uint32_t full0 = adc_input_full_total[0];
+    uint32_t full1 = adc_input_full_total[1];
+    snprintf(line, sizeof(line), "4095 A0:%lu A1:%lu",
+             (unsigned long)(full0 > 999U ? 999U : full0),
+             (unsigned long)(full1 > 999U ? 999U : full1));
+#else
     if (buck_control_state == BUCK_CONTROL_FAULT || buck_control_async_fault != 0U)
         snprintf(line, sizeof(line), "PID ERR:%04lX",
                  (unsigned long)(buck_control_fault | buck_control_async_fault));
     else
         snprintf(line, sizeof(line), "ADC N:%lu", (unsigned long)adc_update_count);
+#endif
     OLED_SetTextLine(6U, line);
+#if !ADC_ONLY_TEST
     if ((buck_control_state == BUCK_CONTROL_SOFT_START
          || buck_control_state == BUCK_CONTROL_RUNNING
          || buck_control_state == BUCK_CONTROL_PREVIEW)
         && isfinite(buck_control_target) && buck_control_target > 0.0f
         && buck_control_async_fault == 0U)
         App_SetVoltageLine(6U, "SET", buck_control_target, input_estimate);
+#endif
 #if ADC_ONLY_TEST || BUCK_CONTROL_POWER_STAGE
     OLED_SetTextLine(7U, BuckControl_StateText());
 #else
@@ -222,11 +232,24 @@ static void App_UpdateVoltageDisplay(void)
                            (fault->output_error & BUCK_ADC_ERR_REFERENCE) != 0U);
         /* Show controller rejection separately from raw ADC diagnostics.
          * Elapsed time/start count remain in the debugger fault snapshot. */
-        snprintf(line, sizeof(line), "AGE:%lu FB:%02lX",
+        snprintf(line, sizeof(line), "AGE%lu FB%02lX E%04lX",
                  (unsigned long)fault->sample_age_ms,
-                 (unsigned long)(fault->feedback_error & 0x0FU));
+                 (unsigned long)(fault->feedback_error & 0x0FU),
+                 (unsigned long)fault->control_error);
         OLED_SetTextLine(2U, line);
-        if (fault->raw_valid)
+        if (adc_first_input_full.valid)
+        {
+            snprintf(line, sizeof(line), "A0 R1:%4lu R2:%4lu",
+                     (unsigned long)adc_first_input_full.rank_raw[0],
+                     (unsigned long)adc_first_input_full.rank_raw[1]);
+            OLED_SetTextLine(3U, line);
+            snprintf(line, sizeof(line), "R3:%4lu A1:%4lu N:%02lu",
+                     (unsigned long)adc_first_input_full.rank_raw[2],
+                     (unsigned long)adc_first_input_full.raw[1],
+                     (unsigned long)adc_first_input_full.frame_number);
+            OLED_SetTextLine(4U, line);
+        }
+        else if (fault->raw_valid)
         {
             snprintf(line, sizeof(line), "F IN +%4lu -%4lu",
                      (unsigned long)fault->input_raw_plus, (unsigned long)fault->input_raw_minus);
@@ -243,6 +266,12 @@ static void App_UpdateVoltageDisplay(void)
         snprintf(line, sizeof(line), "FI:%04lX FO:%04lX",
                  (unsigned long)fault->input_error, (unsigned long)fault->output_error);
         OLED_SetTextLine(5U, line);
+        uint32_t full0 = fault->input_full_total[0];
+        uint32_t full1 = fault->input_full_total[1];
+        snprintf(line, sizeof(line), "F4095 A0:%lu%s A1:%lu%s",
+                 (unsigned long)(full0 > 999U ? 999U : full0), full0 > 999U ? "+" : "",
+                 (unsigned long)(full1 > 999U ? 999U : full1), full1 > 999U ? "+" : "");
+        OLED_SetTextLine(6U, line);
     }
 }
 /* USER CODE END 0 */
