@@ -3,7 +3,7 @@
 #include <math.h>
 
 #define ADC_POLL_TIMEOUT_MS  2U
-#define ADC_SEQUENCE_RANKS   9U
+#define ADC_SEQUENCE_RANKS   11U
 #define ADC_MAX_RAW          4095U
 
 volatile uint32_t adc_raw_plus, adc_raw_minus;
@@ -36,6 +36,7 @@ static ADC_HandleTypeDef hadc1;
 static uint32_t adc_initialized;
 static uint32_t init_error;
 static uint32_t first_full_batch_active;
+static uint32_t recovered_input_rail_streak;
 
 static void IncrementDiagnostic(volatile uint32_t *count)
 {
@@ -50,7 +51,7 @@ static void BeginInputDiagnosticBatch(void)
         adc_input_stats[channel] = (BuckADCRawStats){ADC_MAX_RAW, 0U, 0U, 0U, 0U};
 }
 
-static void RecordInputFrame(const uint32_t values[4], const uint32_t rank_raw[ADC_SEQUENCE_RANKS],
+static void RecordInputFrame(const uint32_t values[5], const uint32_t rank_raw[ADC_SEQUENCE_RANKS],
                              uint32_t frame_number)
 {
     for (uint32_t channel = 0U; channel < 2U; ++channel)
@@ -79,6 +80,7 @@ static void RecordInputFrame(const uint32_t values[4], const uint32_t rank_raw[A
         adc_first_input_full.frame_number = frame_number;
         for (uint32_t channel = 0U; channel < 4U; ++channel)
             adc_first_input_full.raw[channel] = values[channel];
+        adc_first_input_full.input_plus_confirm = values[4];
         for (uint32_t rank = 0U; rank < ADC_SEQUENCE_RANKS; ++rank)
             adc_first_input_full.rank_raw[rank] = rank_raw[rank];
         adc_first_input_full.hal_status = HAL_BUSY;
@@ -219,10 +221,11 @@ HAL_StatusTypeDef BuckADC_Init(void)
     static const uint32_t ranks[ADC_SEQUENCE_RANKS] = {
         ADC_REGULAR_RANK_1, ADC_REGULAR_RANK_2, ADC_REGULAR_RANK_3,
         ADC_REGULAR_RANK_4, ADC_REGULAR_RANK_5, ADC_REGULAR_RANK_6,
-        ADC_REGULAR_RANK_7, ADC_REGULAR_RANK_8, ADC_REGULAR_RANK_9
+        ADC_REGULAR_RANK_7, ADC_REGULAR_RANK_8, ADC_REGULAR_RANK_9,
+        ADC_REGULAR_RANK_10, ADC_REGULAR_RANK_11
     };
     static const uint32_t channels[ADC_SEQUENCE_RANKS] = {
-        ADC_CHANNEL_1, ADC_CHANNEL_1, ADC_CHANNEL_1,
+        ADC_CHANNEL_1, ADC_CHANNEL_1, ADC_CHANNEL_1, ADC_CHANNEL_1, ADC_CHANNEL_1,
         ADC_CHANNEL_2, ADC_CHANNEL_2,
         ADC_CHANNEL_3, ADC_CHANNEL_3,
         ADC_CHANNEL_4, ADC_CHANNEL_4
@@ -234,6 +237,7 @@ HAL_StatusTypeDef BuckADC_Init(void)
     {
         return HAL_OK;
     }
+    recovered_input_rail_streak = 0U;
     adc_error_code = ReferenceValid() ? 0U : BUCK_ADC_ERR_REFERENCE;
     adc_input_error_code = adc_error_code;
     adc_output_error_code = adc_error_code;
@@ -306,11 +310,11 @@ HAL_StatusTypeDef BuckADC_Init(void)
     channel.SingleDiff = ADC_SINGLE_ENDED;
     channel.OffsetNumber = ADC_OFFSET_NONE;
     channel.Offset = 0U;
-    /* ES0430 2.7.8/2.7.9: after a >1 ms idle gap discard the first
-     * conversion, and avoid keeping the conversion that switches channel.
-     * Sequence: IN+(dummy), IN+(keep), IN+(discard), IN-(keep),
-     * IN-(discard), OUT+(keep), OUT+(discard), OUT-(keep), OUT-(discard).
-     * Handles all silicon revisions without changing TIM1 or using DMA. */
+    /* ES0430 2.7.8/2.7.9: discard the first conversion after a >1 ms idle gap,
+     * then keep first-of-pair results and discard each pair's second result.
+     * PA0 has a second accepted result to confirm an isolated rail sample:
+     * IN+(dummy), IN+(primary), IN+(discard), IN+(confirm), IN+(discard),
+     * then two conversions each for IN-, OUT+, and OUT-. */
     for (uint32_t rank = 0U; rank < ADC_SEQUENCE_RANKS; ++rank)
     {
         channel.Channel = channels[rank];
@@ -331,7 +335,7 @@ HAL_StatusTypeDef BuckADC_Init(void)
     return HAL_OK;
 }
 
-static HAL_StatusTypeDef ReadFrame(uint32_t values[4], uint32_t rank_raw[ADC_SEQUENCE_RANKS],
+static HAL_StatusTypeDef ReadFrame(uint32_t values[5], uint32_t rank_raw[ADC_SEQUENCE_RANKS],
                                    uint32_t *reason)
 {
     uint32_t started = HAL_GetTick();
@@ -365,8 +369,16 @@ static HAL_StatusTypeDef ReadFrame(uint32_t values[4], uint32_t rank_raw[ADC_SEQ
         }
         uint32_t value = HAL_ADC_GetValue(&hadc1);
         rank_raw[rank] = value;
-        /* Keep ranks 2/4/6/8, in PA0/PA1/PA2/PA3 order. */
-        if ((rank & 1U) != 0U) values[(rank - 1U) / 2U] = value;
+        /* Keep first-of-pair ranks 2/4/6/8/10. Rank 4 is PA0's backup. */
+        switch (rank)
+        {
+            case 1U: values[0] = value; break; /* PA0 primary */
+            case 3U: values[4] = value; break; /* PA0 confirmation */
+            case 5U: values[1] = value; break; /* PA1 */
+            case 7U: values[2] = value; break; /* PA2 */
+            case 9U: values[3] = value; break; /* PA3 */
+            default: break;
+        }
         if (value > ADC_MAX_RAW)
         {
             *reason = BUCK_ADC_ERR_CONVERSION;
@@ -398,6 +410,7 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
     uint32_t batch_started = HAL_GetTick();
     uint32_t sums[4] = {0U};
     uint32_t reason = 0U, input_rail = 0U, output_rail = 0U;
+    uint32_t recovered_input_rail = 0U;
     BeginInputDiagnosticBatch();
     adc_raw_valid = 0U;
     InvalidateVoltages();
@@ -412,7 +425,7 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
         return ReferenceFault(BUCK_ADC_ERR_VREFBUF_READY, HAL_ERROR);
     for (uint32_t sample = 0U; sample < BUCK_ADC_AVERAGE_COUNT; ++sample)
     {
-        uint32_t values[4] = {0U};
+        uint32_t values[5] = {0U};
         uint32_t rank_raw[ADC_SEQUENCE_RANKS] = {0U};
         HAL_StatusTypeDef status = ReadFrame(values, rank_raw, &reason);
         if (status != HAL_OK)
@@ -421,16 +434,35 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
             return Fail(reason, status);
         }
         RecordInputFrame(values, rank_raw, sample + 1U);
-        /* Check individual readings: averaging must not hide clipped data. */
-        for (uint32_t index = 0U; index < 4U; ++index)
+        /* Confirm a clipped PA0 primary sample once per batch. Repeated or
+         * clipped confirmation values still invalidate VIN and stop PID. */
+        uint32_t input_plus = values[0];
+        if (input_plus == 0U || input_plus == ADC_MAX_RAW)
         {
-            if (values[index] == 0U || values[index] == ADC_MAX_RAW)
+            uint32_t confirm = values[4];
+            if (confirm == 0U || confirm == ADC_MAX_RAW || recovered_input_rail != 0U)
+                input_rail = BUCK_ADC_ERR_RAIL;
+            else
             {
-                if (index < 2U) input_rail = BUCK_ADC_ERR_RAIL;
-                else output_rail = BUCK_ADC_ERR_RAIL;
+                input_plus = confirm;
+                recovered_input_rail = 1U;
             }
-            sums[index] += values[index];
         }
+        if (values[1] == 0U || values[1] == ADC_MAX_RAW) input_rail = BUCK_ADC_ERR_RAIL;
+        if (values[2] == 0U || values[2] == ADC_MAX_RAW
+            || values[3] == 0U || values[3] == ADC_MAX_RAW)
+            output_rail = BUCK_ADC_ERR_RAIL;
+        sums[0] += input_plus;
+        for (uint32_t index = 1U; index < 4U; ++index) sums[index] += values[index];
+    }
+    if (recovered_input_rail != 0U)
+    {
+        if (recovered_input_rail_streak != UINT32_MAX) ++recovered_input_rail_streak;
+        if (recovered_input_rail_streak >= 2U) input_rail = BUCK_ADC_ERR_RAIL;
+    }
+    else
+    {
+        recovered_input_rail_streak = 0U;
     }
     if ((uint32_t)(HAL_GetTick() - batch_started) >= BUCK_ADC_UPDATE_MS)
     {

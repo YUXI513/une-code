@@ -89,7 +89,8 @@ typedef struct {
 typedef struct {
     uint32_t valid, timestamp_ms, batch_number, frame_number;
     uint32_t raw[4]; /* First full-scale frame: PA0, PA1, PA2, PA3. */
-    uint32_t rank_raw[9]; /* All conversion ranks from that same frame. */
+    uint32_t input_plus_confirm;
+    uint32_t rank_raw[11]; /* All conversion ranks from that same frame. */
     BuckADCRawStats input_stats[2]; /* Triggering batch ranges/counts. */
     uint32_t hal_status, error_code;
 } BuckADCFirstInputFull;

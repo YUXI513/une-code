@@ -213,6 +213,13 @@ static void App_UpdateVoltageDisplay(void)
         && isfinite(buck_control_target) && buck_control_target > 0.0f
         && buck_control_async_fault == 0U)
         App_SetVoltageLine(6U, "SET", buck_control_target, input_estimate);
+    if (adc_first_input_full.valid && buck_control_state != BUCK_CONTROL_FAULT)
+    {
+        snprintf(line, sizeof(line), "A0 R2:%4lu R4:%4lu",
+                 (unsigned long)adc_first_input_full.rank_raw[1],
+                 (unsigned long)adc_first_input_full.input_plus_confirm);
+        OLED_SetTextLine(6U, line);
+    }
 #endif
 #if ADC_ONLY_TEST || BUCK_CONTROL_POWER_STAGE
     OLED_SetTextLine(7U, BuckControl_StateText());
@@ -243,9 +250,9 @@ static void App_UpdateVoltageDisplay(void)
                      (unsigned long)adc_first_input_full.rank_raw[0],
                      (unsigned long)adc_first_input_full.rank_raw[1]);
             OLED_SetTextLine(3U, line);
-            snprintf(line, sizeof(line), "R3:%4lu A1:%4lu N:%02lu",
+            snprintf(line, sizeof(line), "R3:%4lu R4:%4lu N:%02lu",
                      (unsigned long)adc_first_input_full.rank_raw[2],
-                     (unsigned long)adc_first_input_full.raw[1],
+                     (unsigned long)adc_first_input_full.input_plus_confirm,
                      (unsigned long)adc_first_input_full.frame_number);
             OLED_SetTextLine(4U, line);
         }
