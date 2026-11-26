@@ -85,7 +85,7 @@ int main(int argc, char **argv)
     {
         if (IS("wait_adc")) adc_raw_valid = 0U;
         if (IS("negative")) vout = -0.501f;
-        if (IS("wait_vin")) vin = 14.9f;
+        if (IS("wait_vin")) vin = 0.0f;
         if (IS("wait_vout")) vout = 5.0f;
         WaitSamples(200U);
         assert(starts == 0U && buck_control_auto_samples == 0U);
@@ -135,6 +135,31 @@ int main(int argc, char **argv)
         WaitSamples(200U);
         assert(starts == 0U && buck_control_auto_pending == 0U);
         puts("PASS operator command cancels automatic startup until reset");
+        return 0;
+    }
+    else if (IS("half_low_vin") || IS("half_high_vin") || IS("half_tracking"))
+    {
+        vin = IS("half_low_vin") ? 12.0f : (IS("half_high_vin") ? 26.0f : 16.0f);
+        QualifyAndStart();
+        assert(buck_control_target == vin * 0.5f);
+        vout = vin * 0.5f;
+        WaitSamples(300U);
+        assert(running == 1U && buck_control_state == BUCK_CONTROL_RUNNING);
+        assert(buck_control_reference == vin * 0.5f);
+        if (IS("half_tracking"))
+        {
+            const float inputs[] = {24.0f, 12.0f, 14.46f};
+            for (uint32_t i = 0U; i < sizeof(inputs) / sizeof(inputs[0]); ++i)
+            {
+                vin = inputs[i]; vout = vin * 0.5f;
+                Sample();
+                assert(running == 1U && starts == 1U);
+                assert(buck_control_state == BUCK_CONTROL_RUNNING);
+                assert(buck_control_target == vin * 0.5f);
+                assert(buck_control_reference == vin * 0.5f);
+            }
+        }
+        puts("PASS half-input automatic start and dynamic tracking without a VIN window");
         return 0;
     }
     else if (IS("bad_pwm"))
@@ -194,13 +219,18 @@ int main(int argc, char **argv)
         QualifyAndStart();
         if (IS("adc_loss")) { adc_raw_valid = 0U; Sample(); }
         else if (IS("feedback_vin_invalid")) { vin = NAN; Sample(); }
+        else if (IS("nonpositive_running"))
+        {
+            vin = 0.0f; Sample();
+            assert(buck_control_fault == BUCK_PID_FAULT_INPUT_NONPOSITIVE);
+        }
         else if (IS("negative_running"))
         {
             vout = 0.60f; Sample(); /* Close the exception before 200 ms. */
             assert(running == 1U);
             vout = -0.02f; Sample();
         }
-        else if (IS("overvoltage")) { vout = 11.1f; Sample(); }
+        else if (IS("overvoltage")) { vout = buck_control_config.output_overvoltage; Sample(); }
         else if (IS("feedback_age"))
         {
             vin = 21.0f; vout = 6.5f; Sample();

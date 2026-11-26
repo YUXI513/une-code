@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <!-- Explicit bench firmware; reset leaves PWM OFF and hardware_ready=0.
+  <!-- Half-input PID bench firmware; reset leaves PWM OFF and hardware_ready=0.
        Selecting/downloading this target does not issue the START command. -->
   <configuration default="false" name="STM32G474_PID_MANUAL" type="com.jetbrains.cidr.embedded.openocd.conf.type" factoryName="com.jetbrains.cidr.embedded.openocd.conf.factory" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="DEMO" TARGET_NAME="DEMO_BUCK_CONTROL_TEST" CONFIG_NAME="Debug - Debug" version="1" RUN_TARGET_PROJECT_NAME="DEMO" RUN_TARGET_NAME="DEMO_BUCK_CONTROL_TEST">
     <openocd version="1" gdb-port="3333" telnet-port="4444" board-config="$PROJECT_DIR$/openocd.cfg" reset-type="INIT" download-type="UPDATED_ONLY">

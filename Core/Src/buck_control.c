@@ -26,6 +26,7 @@ volatile uint32_t buck_control_start_attempts;
 volatile uint32_t buck_control_feedback_estimate;
 volatile uint32_t buck_control_last_step_ms, buck_control_steps;
 volatile float buck_control_reference, buck_control_error;
+volatile float buck_control_target;
 volatile float buck_control_duty, buck_control_integral;
 volatile float buck_control_vin = NAN, buck_control_vout = NAN;
 
@@ -107,6 +108,7 @@ static void SetFault(uint32_t reason)
 
 static void Snapshot(void)
 {
+    buck_control_target = controller.target_voltage;
     buck_control_reference = controller.reference;
     buck_control_error = controller.error;
     buck_control_integral = controller.integral;
@@ -308,7 +310,7 @@ static void ProcessAutomaticStart(uint32_t now)
         ResetAutoQualification(BUCK_CONTROL_WAIT_ADC);
         return;
     }
-    if (buck_control_vin < 15.0f || buck_control_vin > 25.0f)
+    if (buck_control_vin <= 0.0f)
     {
         ResetAutoQualification(BUCK_CONTROL_WAIT_VIN);
         return;
@@ -429,8 +431,8 @@ void BuckControl_Process(uint32_t now)
             SetFault(buck_control_async_fault);
             return;
         }
-        buck_control_state = controller.reference < buck_control_config.target_voltage
-            ? BUCK_CONTROL_SOFT_START : BUCK_CONTROL_RUNNING;
+        buck_control_state = controller.soft_start_complete
+            ? BUCK_CONTROL_RUNNING : BUCK_CONTROL_SOFT_START;
     }
 #else
     (void)duty;
@@ -467,7 +469,7 @@ const char *BuckControl_StateText(void)
         case BUCK_CONTROL_WAIT_START:
             switch (buck_control_auto_wait)
             {
-                case BUCK_CONTROL_WAIT_VIN: return "AUTO WAIT VIN 15-25V";
+                case BUCK_CONTROL_WAIT_VIN: return "AUTO WAIT VIN >0";
                 case BUCK_CONTROL_WAIT_VOUT: return "AUTO WAIT VOUT RANGE";
                 case BUCK_CONTROL_WAIT_QUALIFY: return "AUTO CHECK 1S";
                 default: return "AUTO WAIT ADC";
@@ -476,9 +478,9 @@ const char *BuckControl_StateText(void)
             ? "PID PREVIEW INVALID" : "PID PREVIEW PWM OFF";
         case BUCK_CONTROL_STOPPED: return "PID STOPPED PWM OFF";
         case BUCK_CONTROL_SOFT_START: return buck_control_startup_negative
-            ? "START NEG TEST <200MS" : "PID SOFT START";
+            ? "START NEG TEST <200MS" : "HALF VIN SOFT START";
         case BUCK_CONTROL_RUNNING: return buck_control_feedback_estimate
-            ? "PID RUN NOMINAL VREF" : "PID RUNNING";
+            ? "HALF VIN RUN ~REF" : "HALF VIN RUNNING";
         case BUCK_CONTROL_INHIBITED: return "PID START INHIBITED";
         case BUCK_CONTROL_FAULT:
             if (buck_control_fault & BUCK_CONTROL_ERR_STARTUP_VOUT)

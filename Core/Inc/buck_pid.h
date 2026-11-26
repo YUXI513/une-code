@@ -8,23 +8,24 @@
  * Pure numerical controller: no peripheral access and no automatic start. */
 typedef struct
 {
-    float target_voltage;
+    float output_ratio; /* Desired VOUT/VIN, default 0.5. */
     float kp, ki, kd;
     float duty_min, duty_max;
     float integral_limit;
     float soft_start_volts_per_s;
     float duty_slew_per_s;
     float derivative_filter_s;
-    float vin_min, vin_max;
-    float output_overvoltage;
+    float output_overvoltage; /* Absolute output limit, independent of VIN. */
     float maximum_step_s;
 } BuckPIDConfig;
 
 typedef struct
 {
+    float target_voltage; /* Current VIN * output_ratio, before soft start. */
     float reference, error, integral, derivative, duty;
     float previous_output;
     uint32_t have_previous;
+    uint32_t soft_start_complete;
     uint32_t fault;
 } BuckPID;
 
@@ -32,7 +33,7 @@ enum
 {
     BUCK_PID_FAULT_CONFIG = 1U << 0,
     BUCK_PID_FAULT_SAMPLE = 1U << 1,
-    BUCK_PID_FAULT_INPUT_RANGE = 1U << 2,
+    BUCK_PID_FAULT_INPUT_NONPOSITIVE = 1U << 2,
     BUCK_PID_FAULT_OUTPUT_RANGE = 1U << 3,
     BUCK_PID_FAULT_OVERVOLTAGE = 1U << 4,
     BUCK_PID_FAULT_TIMING = 1U << 5,

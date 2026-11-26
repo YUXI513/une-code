@@ -110,7 +110,7 @@ extern volatile BuckControlFaultSnapshot buck_control_fault_snapshot;
 extern volatile uint32_t buck_control_start_attempts;
 extern volatile uint32_t buck_control_feedback_estimate;
 extern volatile uint32_t buck_control_last_step_ms, buck_control_steps;
-extern volatile float buck_control_reference, buck_control_error;
+extern volatile float buck_control_target, buck_control_reference, buck_control_error;
 extern volatile float buck_control_duty, buck_control_integral;
 extern volatile float buck_control_vin, buck_control_vout;
 

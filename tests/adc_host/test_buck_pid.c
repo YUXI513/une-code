@@ -20,15 +20,53 @@ static void CheckSteady(float input)
         float plant = input * fmaxf(duty - 320.0f / 8400.0f, 0.0f);
         output += 0.25f * (plant - output);
     }
-    assert(fabsf(output - 10.0f) < 0.02f);
-    assert(pid.reference == c.target_voltage);
+    assert(fabsf(output - input * 0.5f) < 0.02f);
+    assert(pid.reference == input * c.output_ratio);
+    assert(pid.target_voltage == input * c.output_ratio);
+    assert(pid.soft_start_complete == 1U);
+    assert(pid.duty > 0.52f); /* PID compensates dead time; not fixed 50% PWM. */
+}
+
+static void CheckInputStepsAndLoad(void)
+{
+    BuckPIDConfig c = BuckPID_DefaultConfig();
+    BuckPID pid;
+    assert(BuckPID_Reset(&pid, &c));
+    float output = 0.0f;
+    for (uint32_t step = 0U; step < 2000U; ++step)
+    {
+        float input = step < 400U ? 16.0f : (step < 800U ? 26.0f
+                    : (step < 1200U ? 12.0f : 20.0f));
+        float load_drop = step >= 1400U && step < 1700U ? 0.5f : 0.0f;
+        float previous = pid.duty;
+        float duty = BuckPID_Step(&pid, &c, input, output, 0.01f, 1U);
+        assert(pid.fault == 0U);
+        assert(fabsf(duty - previous) <= c.duty_slew_per_s * 0.01f + 0.00001f);
+        assert(pid.target_voltage == input * 0.5f);
+        if (step >= 400U)
+        {
+            assert(pid.soft_start_complete == 1U);
+            assert(pid.reference == input * 0.5f); /* No second soft start. */
+        }
+        float plant = input * fmaxf(duty - 320.0f / 8400.0f, 0.0f) - load_drop;
+        output += 0.25f * (plant - output);
+        if (step == 399U || step == 799U || step == 1199U || step == 1399U
+            || step == 1699U || step == 1999U)
+            assert(fabsf(output - input * 0.5f) < 0.05f);
+    }
 }
 
 int main(void)
 {
     CheckSteady(15.0f);
+    CheckSteady(5.0f);
+    CheckSteady(12.0f);
+    CheckSteady(14.46f);
+    CheckSteady(16.0f);
     CheckSteady(20.0f);
     CheckSteady(25.0f);
+    CheckSteady(26.0f);
+    CheckInputStepsAndLoad();
     BuckPIDConfig c = BuckPID_DefaultConfig();
     BuckPID pid;
     assert(BuckPID_Reset(&pid, &c));
@@ -39,9 +77,9 @@ int main(void)
         float duty = BuckPID_Step(&pid, &c, vin, y, 0.01f, 1U);
         assert(pid.fault == 0U);
         y += 0.25f * (vin * fmaxf(duty - 320.0f / 8400.0f, 0.0f) - y);
-        if (step > 500U) assert(fabsf(y - 10.0f) < 0.15f);
+        if (step > 500U) assert(fabsf(y - vin * 0.5f) < 0.15f);
     }
-    assert(fabsf(y - 10.0f) < 0.02f);
+    assert(fabsf(y - 12.5f) < 0.02f);
     /* Saturation does not accumulate an unbounded integral. */
     assert(BuckPID_Reset(&pid, &c));
     for (uint32_t step = 0U; step < 3000U; ++step)
@@ -60,12 +98,15 @@ int main(void)
     assert(BuckPID_Step(&pid, &c, 20.0f, 10.5f, 0.01f, 1U) < 0.5f);
 
     assert(BuckPID_Reset(&pid, &c));
-    assert(BuckPID_Step(&pid, &c, 20.0f, 11.0f, 0.01f, 1U) == 0.0f);
+    assert(BuckPID_Step(&pid, &c, 20.0f, c.output_overvoltage, 0.01f, 1U) == 0.0f);
     assert(pid.fault & BUCK_PID_FAULT_OVERVOLTAGE);
     assert(BuckPID_Step(&pid, &c, 20.0f, 9.0f, 0.01f, 1U) == 0.0f);
     assert(BuckPID_Reset(&pid, &c));
-    assert(BuckPID_Step(&pid, &c, 26.0f, 0.0f, 0.01f, 1U) == 0.0f);
-    assert(pid.fault & BUCK_PID_FAULT_INPUT_RANGE);
+    assert(BuckPID_Step(&pid, &c, 0.0f, 0.0f, 0.01f, 1U) == 0.0f);
+    assert(pid.fault & BUCK_PID_FAULT_INPUT_NONPOSITIVE);
+    assert(BuckPID_Reset(&pid, &c));
+    assert(BuckPID_Step(&pid, &c, -1.0f, 0.0f, 0.01f, 1U) == 0.0f);
+    assert(pid.fault & BUCK_PID_FAULT_INPUT_NONPOSITIVE);
     assert(BuckPID_Reset(&pid, &c));
     assert(BuckPID_Step(&pid, &c, 20.0f, -0.1f, 0.01f, 1U) == 0.0f);
     assert(pid.fault & BUCK_PID_FAULT_OUTPUT_RANGE);
@@ -95,6 +136,14 @@ int main(void)
     assert(pid.derivative == 0.0f); /* Setpoint ramp has no derivative kick. */
     c.kp = NAN;
     assert(!BuckPID_Reset(&pid, &c));
+    c = BuckPID_DefaultConfig(); c.output_ratio = 0.0f;
+    assert(!BuckPID_Reset(&pid, &c));
+    c.output_ratio = 1.0f;
+    assert(!BuckPID_Reset(&pid, &c));
+    c.output_ratio = NAN;
+    assert(!BuckPID_Reset(&pid, &c));
+    c = BuckPID_DefaultConfig(); c.output_overvoltage = 0.0f;
+    assert(!BuckPID_Reset(&pid, &c));
     c = BuckPID_DefaultConfig();
     assert(BuckPID_Reset(&pid, &c));
     assert(BuckPID_StepStartup(&pid, &c, 20.0f, -0.45f, 0.01f, 1U) > 0.0f);
@@ -109,6 +158,6 @@ int main(void)
     assert(BuckPID_Reset(&pid, &c));
     assert(BuckPID_StepStartup(&pid, &c, 20.0f, NAN, 0.01f, 1U) == 0.0f);
     assert(pid.fault & BUCK_PID_FAULT_SAMPLE);
-    puts("PASS PID: 15/20/25 V DC models, slow Vin ramp, soft start, slew, feedback sign, anti-windup and latched faults");
+    puts("PASS half-input PID: 5..26 V DC models, input steps/ramp, load changes, one-shot soft start, dead-time correction and fault latching");
     return 0;
 }
