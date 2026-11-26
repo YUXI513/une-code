@@ -87,7 +87,10 @@ static void SetFault(uint32_t reason)
         buck_control_fault_snapshot.output_raw_plus = adc_raw_plus;
         buck_control_fault_snapshot.output_raw_minus = adc_raw_minus;
         for (uint32_t channel = 0U; channel < 2U; ++channel)
+        {
             buck_control_fault_snapshot.input_full_total[channel] = adc_input_full_total[channel];
+            buck_control_fault_snapshot.input_zero_total[channel] = adc_input_zero_total[channel];
+        }
         buck_control_fault_snapshot.input_voltage = buck_input_voltage;
         buck_control_fault_snapshot.output_voltage = buck_output_voltage;
         buck_control_fault_snapshot.sample_age_ms = now - adc_last_sample_ms;

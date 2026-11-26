@@ -101,6 +101,7 @@ typedef struct
     uint32_t input_error, output_error, raw_valid;
     uint32_t input_raw_plus, input_raw_minus, output_raw_plus, output_raw_minus;
     uint32_t input_full_total[2];
+    uint32_t input_zero_total[2];
     uint32_t elapsed_ms, sample_age_ms, start_attempts, negative_permitted;
     float input_voltage, output_voltage;
 } BuckControlFaultSnapshot;

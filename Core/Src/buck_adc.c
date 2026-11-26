@@ -30,12 +30,12 @@ volatile uint32_t adc_reference_hardware_confirmed = BUCK_ADC_REFERENCE_HARDWARE
 volatile BuckADCRawStats adc_input_stats[2];
 volatile uint32_t adc_input_full_total[2], adc_input_zero_total[2];
 volatile uint32_t adc_diagnostic_batches;
-volatile BuckADCFirstInputFull adc_first_input_full;
+volatile BuckADCFirstInputRail adc_first_input_rail;
 
 static ADC_HandleTypeDef hadc1;
 static uint32_t adc_initialized;
 static uint32_t init_error;
-static uint32_t first_full_batch_active;
+static uint32_t first_rail_batch_active;
 static uint32_t recovered_input_rail_streak;
 
 static void IncrementDiagnostic(volatile uint32_t *count)
@@ -45,7 +45,7 @@ static void IncrementDiagnostic(volatile uint32_t *count)
 
 static void BeginInputDiagnosticBatch(void)
 {
-    first_full_batch_active = 0U;
+    first_rail_batch_active = 0U;
     IncrementDiagnostic(&adc_diagnostic_batches);
     for (uint32_t channel = 0U; channel < 2U; ++channel)
         adc_input_stats[channel] = (BuckADCRawStats){ADC_MAX_RAW, 0U, 0U, 0U, 0U};
@@ -72,32 +72,37 @@ static void RecordInputFrame(const uint32_t values[5], const uint32_t rank_raw[A
             IncrementDiagnostic(&adc_input_full_total[channel]);
         }
     }
-    if (!adc_first_input_full.valid
-        && (values[0] == ADC_MAX_RAW || values[1] == ADC_MAX_RAW))
+    uint32_t endpoint_mask = 0U;
+    if (values[0] == 0U) endpoint_mask |= 1U << 0;
+    if (values[0] == ADC_MAX_RAW) endpoint_mask |= 1U << 1;
+    if (values[1] == 0U) endpoint_mask |= 1U << 2;
+    if (values[1] == ADC_MAX_RAW) endpoint_mask |= 1U << 3;
+    if (!adc_first_input_rail.valid && endpoint_mask != 0U)
     {
-        adc_first_input_full.timestamp_ms = HAL_GetTick();
-        adc_first_input_full.batch_number = adc_diagnostic_batches;
-        adc_first_input_full.frame_number = frame_number;
+        adc_first_input_rail.timestamp_ms = HAL_GetTick();
+        adc_first_input_rail.batch_number = adc_diagnostic_batches;
+        adc_first_input_rail.frame_number = frame_number;
+        adc_first_input_rail.endpoint_mask = endpoint_mask;
         for (uint32_t channel = 0U; channel < 4U; ++channel)
-            adc_first_input_full.raw[channel] = values[channel];
-        adc_first_input_full.input_plus_confirm = values[4];
+            adc_first_input_rail.raw[channel] = values[channel];
+        adc_first_input_rail.input_plus_confirm = values[4];
         for (uint32_t rank = 0U; rank < ADC_SEQUENCE_RANKS; ++rank)
-            adc_first_input_full.rank_raw[rank] = rank_raw[rank];
-        adc_first_input_full.hal_status = HAL_BUSY;
-        first_full_batch_active = 1U;
-        adc_first_input_full.valid = 1U;
+            adc_first_input_rail.rank_raw[rank] = rank_raw[rank];
+        adc_first_input_rail.hal_status = HAL_BUSY;
+        first_rail_batch_active = 1U;
+        adc_first_input_rail.valid = 1U;
     }
-    if (first_full_batch_active)
+    if (first_rail_batch_active)
         for (uint32_t channel = 0U; channel < 2U; ++channel)
-            adc_first_input_full.input_stats[channel] = adc_input_stats[channel];
+            adc_first_input_rail.input_stats[channel] = adc_input_stats[channel];
 }
 
 static void FinishInputDiagnosticBatch(HAL_StatusTypeDef status, uint32_t error)
 {
-    if (first_full_batch_active)
+    if (first_rail_batch_active)
     {
-        adc_first_input_full.hal_status = (uint32_t)status;
-        adc_first_input_full.error_code = error;
+        adc_first_input_rail.hal_status = (uint32_t)status;
+        adc_first_input_rail.error_code = error;
     }
 }
 

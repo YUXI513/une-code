@@ -195,9 +195,13 @@ static void App_UpdateVoltageDisplay(void)
 #if ADC_ONLY_TEST
     uint32_t full0 = adc_input_full_total[0];
     uint32_t full1 = adc_input_full_total[1];
-    snprintf(line, sizeof(line), "4095 A0:%lu A1:%lu",
-             (unsigned long)(full0 > 999U ? 999U : full0),
-             (unsigned long)(full1 > 999U ? 999U : full1));
+    uint32_t zero0 = adc_input_zero_total[0];
+    uint32_t zero1 = adc_input_zero_total[1];
+    snprintf(line, sizeof(line), "A0 F/Z:%02lu/%02lu A1:%02lu/%02lu",
+             (unsigned long)(full0 > 99U ? 99U : full0),
+             (unsigned long)(zero0 > 99U ? 99U : zero0),
+             (unsigned long)(full1 > 99U ? 99U : full1),
+             (unsigned long)(zero1 > 99U ? 99U : zero1));
 #else
     if (buck_control_state == BUCK_CONTROL_FAULT || buck_control_async_fault != 0U)
         snprintf(line, sizeof(line), "PID ERR:%04lX",
@@ -213,11 +217,16 @@ static void App_UpdateVoltageDisplay(void)
         && isfinite(buck_control_target) && buck_control_target > 0.0f
         && buck_control_async_fault == 0U)
         App_SetVoltageLine(6U, "SET", buck_control_target, input_estimate);
-    if (adc_first_input_full.valid && buck_control_state != BUCK_CONTROL_FAULT)
+    if (adc_first_input_rail.valid && buck_control_state != BUCK_CONTROL_FAULT)
     {
-        snprintf(line, sizeof(line), "A0 R2:%4lu R4:%4lu",
-                 (unsigned long)adc_first_input_full.rank_raw[1],
-                 (unsigned long)adc_first_input_full.input_plus_confirm);
+        if ((adc_first_input_rail.endpoint_mask & 0x03U) != 0U)
+            snprintf(line, sizeof(line), "A0 R2:%4lu R4:%4lu",
+                     (unsigned long)adc_first_input_rail.rank_raw[1],
+                     (unsigned long)adc_first_input_rail.input_plus_confirm);
+        else
+            snprintf(line, sizeof(line), "A1 R6:%4lu R7:%4lu",
+                     (unsigned long)adc_first_input_rail.rank_raw[5],
+                     (unsigned long)adc_first_input_rail.rank_raw[6]);
         OLED_SetTextLine(6U, line);
     }
 #endif
@@ -244,17 +253,31 @@ static void App_UpdateVoltageDisplay(void)
                  (unsigned long)(fault->feedback_error & 0x0FU),
                  (unsigned long)fault->control_error);
         OLED_SetTextLine(2U, line);
-        if (adc_first_input_full.valid)
+        if (adc_first_input_rail.valid)
         {
-            snprintf(line, sizeof(line), "A0 R1:%4lu R2:%4lu",
-                     (unsigned long)adc_first_input_full.rank_raw[0],
-                     (unsigned long)adc_first_input_full.rank_raw[1]);
-            OLED_SetTextLine(3U, line);
-            snprintf(line, sizeof(line), "R3:%4lu R4:%4lu N:%02lu",
-                     (unsigned long)adc_first_input_full.rank_raw[2],
-                     (unsigned long)adc_first_input_full.input_plus_confirm,
-                     (unsigned long)adc_first_input_full.frame_number);
-            OLED_SetTextLine(4U, line);
+            if ((adc_first_input_rail.endpoint_mask & 0x03U) != 0U)
+            {
+                snprintf(line, sizeof(line), "A0 R1:%4lu R2:%4lu",
+                         (unsigned long)adc_first_input_rail.rank_raw[0],
+                         (unsigned long)adc_first_input_rail.rank_raw[1]);
+                OLED_SetTextLine(3U, line);
+                snprintf(line, sizeof(line), "R3:%4lu R4:%4lu N:%02lu",
+                         (unsigned long)adc_first_input_rail.rank_raw[2],
+                         (unsigned long)adc_first_input_rail.input_plus_confirm,
+                         (unsigned long)adc_first_input_rail.frame_number);
+                OLED_SetTextLine(4U, line);
+            }
+            else
+            {
+                snprintf(line, sizeof(line), "A1 R6:%4lu R7:%4lu",
+                         (unsigned long)adc_first_input_rail.rank_raw[5],
+                         (unsigned long)adc_first_input_rail.rank_raw[6]);
+                OLED_SetTextLine(3U, line);
+                snprintf(line, sizeof(line), "A0 R4:%4lu R5:%4lu",
+                         (unsigned long)adc_first_input_rail.rank_raw[3],
+                         (unsigned long)adc_first_input_rail.rank_raw[4]);
+                OLED_SetTextLine(4U, line);
+            }
         }
         else if (fault->raw_valid)
         {
@@ -275,9 +298,13 @@ static void App_UpdateVoltageDisplay(void)
         OLED_SetTextLine(5U, line);
         uint32_t full0 = fault->input_full_total[0];
         uint32_t full1 = fault->input_full_total[1];
-        snprintf(line, sizeof(line), "F4095 A0:%lu%s A1:%lu%s",
-                 (unsigned long)(full0 > 999U ? 999U : full0), full0 > 999U ? "+" : "",
-                 (unsigned long)(full1 > 999U ? 999U : full1), full1 > 999U ? "+" : "");
+        uint32_t zero0 = fault->input_zero_total[0];
+        uint32_t zero1 = fault->input_zero_total[1];
+        snprintf(line, sizeof(line), "A0 F/Z:%02lu/%02lu A1:%02lu/%02lu",
+                 (unsigned long)(full0 > 99U ? 99U : full0),
+                 (unsigned long)(zero0 > 99U ? 99U : zero0),
+                 (unsigned long)(full1 > 99U ? 99U : full1),
+                 (unsigned long)(zero1 > 99U ? 99U : zero1));
         OLED_SetTextLine(6U, line);
     }
 }

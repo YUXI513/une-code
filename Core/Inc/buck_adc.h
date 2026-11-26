@@ -88,18 +88,19 @@ typedef struct {
 
 typedef struct {
     uint32_t valid, timestamp_ms, batch_number, frame_number;
-    uint32_t raw[4]; /* First full-scale frame: PA0, PA1, PA2, PA3. */
+    uint32_t raw[4]; /* First input-rail frame: PA0, PA1, PA2, PA3. */
+    uint32_t endpoint_mask; /* A0 zero/full, A1 zero/full in bits 0..3. */
     uint32_t input_plus_confirm;
     uint32_t rank_raw[11]; /* All conversion ranks from that same frame. */
     BuckADCRawStats input_stats[2]; /* Triggering batch ranges/counts. */
     uint32_t hal_status, error_code;
-} BuckADCFirstInputFull;
+} BuckADCFirstInputRail;
 
-/* Diagnostic only: retained input endpoint totals and first full-scale frame. */
+/* Diagnostic only: retained input endpoint totals and first rail frame. */
 extern volatile BuckADCRawStats adc_input_stats[2];
 extern volatile uint32_t adc_input_full_total[2], adc_input_zero_total[2];
 extern volatile uint32_t adc_diagnostic_batches;
-extern volatile BuckADCFirstInputFull adc_first_input_full;
+extern volatile BuckADCFirstInputRail adc_first_input_rail;
 
 /* HAL_OK from ReadVoltage means all four fresh raw readings were acquired.
  * adc_sample_valid requires BOTH voltage pairs valid. Each voltage getter
