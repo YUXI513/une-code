@@ -42,8 +42,8 @@ add_subdirectory(cmake/stm32cubemx)
 target_compile_definitions(stm32cubemx INTERFACE HSE_VALUE=8000000U)
 
 # Safe default: ADC monitoring only, never start the Buck power PWM.
-# Restore the original open-loop application only by explicitly setting OFF.
-option(ADC_ONLY_TEST "ADC/OLED test with PA10 and PB13 held low" ON)
+# Select DEMO_OPEN_LOOP_TEST explicitly for fixed-duty switching with ADC.
+option(ADC_ONLY_TEST "ADC/OLED test with PA10/PB15 held low; PB13 retired" ON)
 target_sources(STM32_Drivers PRIVATE
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_adc.c
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_adc_ex.c
@@ -92,3 +92,12 @@ target_compile_definitions(DEMO_PA10_TEST PRIVATE
     BUCK_PWM_TEST_PA10_ONLY=1 ADC_ONLY_TEST=$<BOOL:${ADC_ONLY_TEST}>)
 target_link_libraries(DEMO_PA10_TEST PRIVATE stm32cubemx STM32_Drivers ${TOOLCHAIN_LINK_LIBRARIES})
 target_link_options(DEMO_PA10_TEST PRIVATE "-Wl,-Map=DEMO_PA10_TEST.map")
+
+# Explicit fixed-duty open-loop firmware for ADC comparison. No PID sources
+# are linked. Flash/reset starts 50% switching; build never flashes hardware.
+add_executable(DEMO_OPEN_LOOP_TEST EXCLUDE_FROM_ALL ${DEMO_Application_Sources})
+target_compile_definitions(DEMO_OPEN_LOOP_TEST PRIVATE
+    ADC_ONLY_TEST=0 BUCK_OPEN_LOOP_TEST=1)
+target_link_libraries(DEMO_OPEN_LOOP_TEST PRIVATE
+    stm32cubemx STM32_Drivers ${TOOLCHAIN_LINK_LIBRARIES})
+target_link_options(DEMO_OPEN_LOOP_TEST PRIVATE "-Wl,-Map=DEMO_OPEN_LOOP_TEST.map")

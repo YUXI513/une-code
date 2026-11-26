@@ -25,6 +25,7 @@
 #include "buck_pwm.h"
 #include "buck_adc.h"
 #include "buck_display_filter.h"
+#include "buck_voltage_display.h"
 #include <math.h>
 #include <stdio.h>
 /* USER CODE END Includes */
@@ -79,13 +80,13 @@ static void App_HoldPWMInactive(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13 | GPIO_PIN_15, GPIO_PIN_RESET);
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
     gpio.Pull = GPIO_NOPULL;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     gpio.Pin = GPIO_PIN_10;
     HAL_GPIO_Init(GPIOA, &gpio);
-    gpio.Pin = GPIO_PIN_13;
+    gpio.Pin = GPIO_PIN_13 | GPIO_PIN_15;
     HAL_GPIO_Init(GPIOB, &gpio);
 }
 #endif
@@ -93,52 +94,46 @@ static void App_HoldPWMInactive(void)
 static void App_SetVoltageLine(uint8_t row, const char *label, float voltage, uint32_t estimate)
 {
     char line[22];
-    if (isfinite(voltage))
-    {
-        unsigned long hundredths = (unsigned long)(voltage * 100.0f + 0.5f);
-        snprintf(line, sizeof(line), "%s:%s%lu.%02luV",
-                 label, estimate ? "~" : "", hundredths / 100UL, hundredths % 100UL);
-    }
-    else
-        snprintf(line, sizeof(line), "%s:--.--V", label);
+    BuckVoltageDisplay_Format(line, sizeof(line), label, voltage, estimate);
     OLED_SetTextLine(row, line);
 }
 
 static void App_UpdateVoltageMonitor(void)
 {
-    float input = BuckADC_GetInputVoltage();
-    float output = BuckADC_GetOutputVoltage();
-    uint32_t input_estimate = !isfinite(input);
-    uint32_t output_estimate = !isfinite(output);
-    if (input_estimate) input = BuckADC_GetInputVoltageEstimate();
-    if (output_estimate) output = BuckADC_GetOutputVoltageEstimate();
+    float input = BuckADC_GetInputVoltageForDisplay();
+    float output = BuckADC_GetOutputVoltageForDisplay();
+    uint32_t input_estimate = (adc_input_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
+    uint32_t output_estimate = (adc_output_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
+    uint32_t input_source = input_estimate | ((adc_input_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
+    uint32_t output_source = output_estimate | ((adc_output_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
     uint32_t now = HAL_GetTick();
-    float filtered_input = BuckDisplayFilter_Update(&input_display_filter, input, now, input_estimate);
-    float filtered_output = BuckDisplayFilter_Update(&output_display_filter, output, now, output_estimate);
+    /* A sign anomaly must not be hidden by the old positive digit history. */
+    float filtered_input = BuckDisplayFilter_Update(&input_display_filter, input, now, input_source);
+    float filtered_output = BuckDisplayFilter_Update(&output_display_filter, output, now, output_source);
     /* Invalidate digit history immediately, even between OLED refreshes. */
     if (!isfinite(filtered_input))
-        buck_input_voltage_display = BuckDisplayDigits_Update(&input_display_digits, NAN, now, input_estimate);
+        buck_input_voltage_display = BuckDisplayDigits_Update(&input_display_digits, NAN, now, input_source);
     if (!isfinite(filtered_output))
-        buck_output_voltage_display = BuckDisplayDigits_Update(&output_display_digits, NAN, now, output_estimate);
+        buck_output_voltage_display = BuckDisplayDigits_Update(&output_display_digits, NAN, now, output_source);
 }
 
 static void App_UpdateVoltageDisplay(void)
 {
     char line[22];
     /* Recheck current ADC validity before showing a stored filter value. */
-    float input = BuckADC_GetInputVoltage();
-    float output = BuckADC_GetOutputVoltage();
-    uint32_t input_estimate = !isfinite(input);
-    uint32_t output_estimate = !isfinite(output);
-    if (input_estimate) input = BuckADC_GetInputVoltageEstimate();
-    if (output_estimate) output = BuckADC_GetOutputVoltageEstimate();
+    float input = BuckADC_GetInputVoltageForDisplay();
+    float output = BuckADC_GetOutputVoltageForDisplay();
+    uint32_t input_estimate = (adc_input_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
+    uint32_t output_estimate = (adc_output_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
+    uint32_t input_source = input_estimate | ((adc_input_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
+    uint32_t output_source = output_estimate | ((adc_output_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
     if (!isfinite(input)) BuckDisplayFilter_Reset(&input_display_filter);
     if (!isfinite(output)) BuckDisplayFilter_Reset(&output_display_filter);
     uint32_t now = HAL_GetTick();
     input = BuckDisplayFilter_Get(&input_display_filter, now);
     output = BuckDisplayFilter_Get(&output_display_filter, now);
-    input = BuckDisplayDigits_Update(&input_display_digits, input, now, input_estimate);
-    output = BuckDisplayDigits_Update(&output_display_digits, output, now, output_estimate);
+    input = BuckDisplayDigits_Update(&input_display_digits, input, now, input_source);
+    output = BuckDisplayDigits_Update(&output_display_digits, output, now, output_source);
     buck_input_voltage_display = input;
     buck_output_voltage_display = output;
     App_SetVoltageLine(0U, "VIN", input, input_estimate);
@@ -192,12 +187,8 @@ static void App_UpdateVoltageDisplay(void)
     snprintf(line, sizeof(line), "EI:%04lX EO:%04lX",
              (unsigned long)adc_input_error_code, (unsigned long)adc_output_error_code);
     OLED_SetTextLine(5U, line);
-    if (signal_state != NULL)
-        OLED_SetTextLine(6U, signal_state);
-    else if (BUCK_ADC_INTERNAL_REFERENCE_TEST && adc_reference_hardware_confirmed == 0U)
-        OLED_SetTextLine(6U, adc_vrefbuf_ready != 0U ? "VREFBUF READY - TEST" : "VREFBUF NOT READY");
-    else
-        OLED_SetTextLine(6U, adc_raw_valid != 0U ? "RAW OK" : "NO RAW");
+    snprintf(line, sizeof(line), "ADC N:%lu", (unsigned long)adc_update_count);
+    OLED_SetTextLine(6U, line);
 #if ADC_ONLY_TEST
     OLED_SetTextLine(7U, "ADC ONLY - PWM OFF");
 #else
