@@ -280,9 +280,8 @@ HAL_StatusTypeDef BuckADC_Init(void)
     hadc1.Init.GainCompensation = 0U;
     hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
     hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
-    /* Let hardware advance ranks without software gaps. The 11-rank scan
-     * must fit within the PWM phase selected for sampling. */
-    hadc1.Init.LowPowerAutoWait = DISABLE;
+    /* Hold each rank until DR is read so polling cannot overrun the scan. */
+    hadc1.Init.LowPowerAutoWait = ENABLE;
     hadc1.Init.ContinuousConvMode = DISABLE;
     hadc1.Init.NbrOfConversion = ADC_SEQUENCE_RANKS;
     hadc1.Init.DiscontinuousConvMode = DISABLE;
@@ -313,7 +312,7 @@ HAL_StatusTypeDef BuckADC_Init(void)
         init_error = BUCK_ADC_ERR_CALIBRATION;
         return Fail(init_error, status);
     }
-    channel.SamplingTime = ADC_SAMPLETIME_12CYCLES_5;
+    channel.SamplingTime = ADC_SAMPLETIME_6CYCLES_5;
     channel.SingleDiff = ADC_SINGLE_ENDED;
     channel.OffsetNumber = ADC_OFFSET_NONE;
     channel.Offset = 0U;

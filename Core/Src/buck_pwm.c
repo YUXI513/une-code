@@ -154,7 +154,7 @@ void BuckPWM_Init(void)
     buck_pwm_adc_sequence_ticks =
         (BUCK_ADC_SEQUENCE_CYCLES_X2 * timer_clock + 2U * adc_clock - 1U)
         / (2U * adc_clock)
-        + timer_clock / 500000U; /* 2 us for polling and execution */
+        + timer_clock / 166667U; /* 6 us for per-rank polling gaps */
     buck_pwm_adc_guard_ticks = timer_clock / 1000000U; /* 1 us on each side */
     adc_trigger_tick = BuckPWM_ComputeADCTriggerTick(period_ticks / 2U);
     if (adc_trigger_tick == 0U)
