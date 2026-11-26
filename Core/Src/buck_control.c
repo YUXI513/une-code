@@ -286,7 +286,8 @@ static void HandleCommand(uint32_t now)
     buck_control_state = BUCK_CONTROL_SOFT_START;
     ++buck_control_start_attempts;
     BuckPWM_Start();
-    if (!BuckPWM_IsRunning() || buck_control_async_fault != 0U)
+    if (!BuckPWM_IsRunning() || buck_control_async_fault != 0U
+        || BuckADC_UsePWMSynchronizedTrigger() != HAL_OK)
     {
         SetFault(BUCK_CONTROL_ERR_PWM);
         return;

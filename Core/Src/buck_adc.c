@@ -3,7 +3,7 @@
 #include <math.h>
 
 #define ADC_POLL_TIMEOUT_MS  2U
-#define ADC_SEQUENCE_RANKS   11U
+#define ADC_SEQUENCE_RANKS   BUCK_ADC_REGULAR_RANK_COUNT
 #define ADC_MAX_RAW          4095U
 
 volatile uint32_t adc_raw_plus, adc_raw_minus;
@@ -34,6 +34,7 @@ volatile BuckADCFirstInputRail adc_first_input_rail;
 
 static ADC_HandleTypeDef hadc1;
 static uint32_t adc_initialized;
+static uint32_t adc_pwm_synchronized;
 static uint32_t init_error;
 static uint32_t first_rail_batch_active;
 static uint32_t recovered_input_rail_streak;
@@ -279,8 +280,9 @@ HAL_StatusTypeDef BuckADC_Init(void)
     hadc1.Init.GainCompensation = 0U;
     hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
     hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
-    /* DR reads release the next rank, so polling cannot lose U+ to U-. */
-    hadc1.Init.LowPowerAutoWait = ENABLE;
+    /* Let hardware advance ranks without software gaps. The 11-rank scan
+     * must fit within the PWM phase selected for sampling. */
+    hadc1.Init.LowPowerAutoWait = DISABLE;
     hadc1.Init.ContinuousConvMode = DISABLE;
     hadc1.Init.NbrOfConversion = ADC_SEQUENCE_RANKS;
     hadc1.Init.DiscontinuousConvMode = DISABLE;
@@ -311,7 +313,7 @@ HAL_StatusTypeDef BuckADC_Init(void)
         init_error = BUCK_ADC_ERR_CALIBRATION;
         return Fail(init_error, status);
     }
-    channel.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+    channel.SamplingTime = ADC_SAMPLETIME_12CYCLES_5;
     channel.SingleDiff = ADC_SINGLE_ENDED;
     channel.OffsetNumber = ADC_OFFSET_NONE;
     channel.Offset = 0U;
@@ -336,7 +338,23 @@ HAL_StatusTypeDef BuckADC_Init(void)
     HAL_Delay(1U);
     init_error = 0U;
     adc_initialized = 1U;
+    adc_pwm_synchronized = 0U;
     adc_last_hal_status = HAL_OK;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef BuckADC_UsePWMSynchronizedTrigger(void)
+{
+    if (adc_initialized == 0U) return HAL_ERROR;
+    if (adc_pwm_synchronized != 0U) return HAL_OK;
+    if ((READ_BIT(hadc1.Instance->CR, ADC_CR_ADSTART | ADC_CR_ADSTP)) != 0U)
+        return HAL_BUSY;
+
+    /* TIM1 CH4 produces one trigger per PWM cycle in a quiet phase. */
+    MODIFY_REG(hadc1.Instance->CFGR,
+               ADC_CFGR_EXTSEL_Msk | ADC_CFGR_EXTEN_Msk,
+               ADC_EXTERNALTRIG_T1_TRGO2 | ADC_EXTERNALTRIGCONVEDGE_RISING);
+    adc_pwm_synchronized = 1U;
     return HAL_OK;
 }
 

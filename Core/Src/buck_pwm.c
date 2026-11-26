@@ -1,4 +1,5 @@
 #include "buck_pwm.h"
+#include "buck_timing.h"
 #include "main.h"
 #include "stm32g4xx_ll_tim.h"
 #include <math.h>
@@ -10,6 +11,36 @@
 static uint32_t buck_pwm_initialized;
 static uint32_t buck_pwm_period_ticks;
 static uint32_t buck_pwm_dead_ticks;
+static uint32_t buck_pwm_adc_sequence_ticks;
+static uint32_t buck_pwm_adc_guard_ticks;
+
+static uint32_t BuckPWM_ComputeADCTriggerTick(uint32_t compare)
+{
+    uint32_t high_start = buck_pwm_dead_ticks + buck_pwm_adc_guard_ticks;
+    uint32_t high_end = compare > buck_pwm_dead_ticks + buck_pwm_adc_guard_ticks
+        ? compare - buck_pwm_dead_ticks - buck_pwm_adc_guard_ticks : 0U;
+    uint32_t low_start = compare + buck_pwm_dead_ticks + buck_pwm_adc_guard_ticks;
+    uint32_t low_end = buck_pwm_period_ticks > buck_pwm_dead_ticks + buck_pwm_adc_guard_ticks
+        ? buck_pwm_period_ticks - buck_pwm_dead_ticks - buck_pwm_adc_guard_ticks : 0U;
+    uint32_t high_ticks = high_end > high_start ? high_end - high_start : 0U;
+    uint32_t low_ticks = low_end > low_start ? low_end - low_start : 0U;
+    uint32_t start;
+    uint32_t available;
+
+    if (high_ticks >= low_ticks)
+    {
+        start = high_start;
+        available = high_ticks;
+    }
+    else
+    {
+        start = low_start;
+        available = low_ticks;
+    }
+    if (available < buck_pwm_adc_sequence_ticks || start == 0U)
+        return 0U;
+    return start + (available - buck_pwm_adc_sequence_ticks) / 2U;
+}
 
 static void BuckPWM_GPIO_HoldLow(void)
 {
@@ -74,12 +105,16 @@ static uint32_t BuckPWM_DecodeDeadTime(uint32_t code)
 void BuckPWM_Init(void)
 {
     uint32_t timer_clock;
+    uint32_t adc_clock;
     uint32_t period_ticks;
     uint32_t dead_time_code;
+    uint32_t adc_trigger_tick;
 
     BuckPWM_Stop();
     buck_pwm_initialized = 0U;
     buck_pwm_period_ticks = 0U;
+    buck_pwm_adc_sequence_ticks = 0U;
+    buck_pwm_adc_guard_ticks = 0U;
     BuckPWM_GPIO_HoldLow();
 
     timer_clock = HAL_RCC_GetPCLK2Freq();
@@ -108,6 +143,26 @@ void BuckPWM_Init(void)
         return;
     }
 
+    adc_clock = HAL_RCC_GetSysClockFreq() / 8U;
+    if (adc_clock == 0U)
+    {
+        Error_Handler();
+        return;
+    }
+    buck_pwm_period_ticks = period_ticks;
+    buck_pwm_dead_ticks = BuckPWM_DecodeDeadTime(dead_time_code);
+    buck_pwm_adc_sequence_ticks =
+        (BUCK_ADC_SEQUENCE_CYCLES_X2 * timer_clock + 2U * adc_clock - 1U)
+        / (2U * adc_clock)
+        + timer_clock / 500000U; /* 2 us for polling and execution */
+    buck_pwm_adc_guard_ticks = timer_clock / 1000000U; /* 1 us on each side */
+    adc_trigger_tick = BuckPWM_ComputeADCTriggerTick(period_ticks / 2U);
+    if (adc_trigger_tick == 0U)
+    {
+        Error_Handler();
+        return;
+    }
+
     __HAL_RCC_TIM1_CLK_ENABLE();
     __HAL_RCC_TIM1_FORCE_RESET();
     __HAL_RCC_TIM1_RELEASE_RESET();
@@ -123,6 +178,14 @@ void BuckPWM_Init(void)
     LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH3);
     LL_TIM_OC_SetCompareCH3(TIM1, period_ticks / 2U);
 
+    /* CH4 is internal: PWM2's rising OC4REF edge triggers ADC once per
+     * cycle. CH6 remains inactive so it cannot create another trigger. */
+    LL_TIM_OC_SetMode(TIM1, LL_TIM_CHANNEL_CH4, LL_TIM_OCMODE_PWM2);
+    LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH4);
+    LL_TIM_OC_SetCompareCH4(TIM1, adc_trigger_tick);
+    LL_TIM_OC_SetMode(TIM1, LL_TIM_CHANNEL_CH6, LL_TIM_OCMODE_FORCED_INACTIVE);
+    LL_TIM_SetTriggerOutput2(TIM1, LL_TIM_TRGO2_OC4_RISING_OC6_RISING);
+
     /* Reset leaves all polarities active-high and all idle levels low.
      * CH3 and CH3N share OC3REF and the hardware dead-time generator.
      * The TIM1 reset above leaves CH1/CH1N disabled; no duplicated compare
@@ -130,14 +193,13 @@ void BuckPWM_Init(void)
      */
     LL_TIM_SetOffStates(TIM1, LL_TIM_OSSI_ENABLE, LL_TIM_OSSR_ENABLE);
     LL_TIM_OC_SetDeadTime(TIM1, dead_time_code);
-    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH3N);
+    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH3N |
+                                 LL_TIM_CHANNEL_CH4);
 
     /* Load CCR3 while the counter/MOE are off. */
     LL_TIM_GenerateEvent_UPDATE(TIM1);
     LL_TIM_ClearFlag_UPDATE(TIM1);
     BuckPWM_GPIO_ConnectTimer();
-    buck_pwm_period_ticks = period_ticks;
-    buck_pwm_dead_ticks = BuckPWM_DecodeDeadTime(dead_time_code);
     buck_pwm_initialized = 1U;
 }
 
@@ -154,10 +216,17 @@ uint32_t BuckPWM_SetDuty(float duty)
         BuckPWM_Stop();
         return 0U;
     }
+    uint32_t adc_trigger_tick = BuckPWM_ComputeADCTriggerTick(compare);
+    if (adc_trigger_tick == 0U)
+    {
+        BuckPWM_Stop();
+        return 0U;
+    }
     /* One preloaded CCR3 controls the complementary pair. A natural update
      * transfers it to both outputs; no UDIS manipulation or forced UG is
      * needed, so the running PWM phase/frequency stay unchanged. */
     LL_TIM_OC_SetCompareCH3(TIM1, compare);
+    LL_TIM_OC_SetCompareCH4(TIM1, adc_trigger_tick);
     __DSB();
     return 1U;
 }
