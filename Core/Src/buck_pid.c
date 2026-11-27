@@ -30,7 +30,7 @@ BuckPIDConfig BuckPID_DefaultConfig(void)
      * 100 Hz execution; retain Kd=0 (PI) until plant/waveforms are measured.
      * Track half VIN; only a finite positive VIN is required for division. */
     BuckPIDConfig c = {
-        .output_ratio = 0.5f, .kp = 0.005f, .ki = 0.05f, .kd = 0.0f,
+        .output_ratio = 0.5f, .kp = 1.0f, .ki = 100.0f, .kd = 0.0f,
         .duty_min = 0.08f, .duty_max = 0.80f, .integral_limit = 0.30f,
         .soft_start_volts_per_s = 5.0f, .duty_slew_per_s = 0.50f,
         .derivative_filter_s = 0.02f, .maximum_step_s = 0.030f
