@@ -106,8 +106,26 @@ static void App_SetMeasurementLine(uint8_t row, const char *label, float value,
 {
     char line[48];
     if (isfinite(value))
-        (void)snprintf(line, sizeof(line), "%s：%s%.2f%s", label,
-                       estimate ? "~" : "", value, unit);
+    {
+        /* newlib-nano is linked without float printf support. Convert to
+         * signed hundredths and format with integer specifiers instead. */
+        if (fabsf(value) <= 20000000.0f)
+        {
+            int32_t hundredths = (int32_t)(value * 100.0f
+                                  + (value >= 0.0f ? 0.5f : -0.5f));
+            uint32_t magnitude = hundredths < 0
+                ? (uint32_t)(-hundredths) : (uint32_t)hundredths;
+            (void)snprintf(line, sizeof(line), "%s：%s%s%lu.%02lu%s", label,
+                           estimate ? "~" : "", hundredths < 0 ? "-" : "",
+                           (unsigned long)(magnitude / 100U),
+                           (unsigned long)(magnitude % 100U), unit);
+        }
+        else
+        {
+            (void)snprintf(line, sizeof(line), "%s：%sOVR%s", label,
+                           estimate ? "~" : "", unit);
+        }
+    }
     else
         (void)snprintf(line, sizeof(line), "%s：---%s", label, unit);
     OLED_SetTextLine(row, line);
