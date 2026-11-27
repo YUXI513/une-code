@@ -8,6 +8,7 @@
  * Nominal samples arrive every 10 ms; clear after a missing 30 ms window.
  * Time constant 200 ms: a voltage step takes about 0.6 s to settle to 95%. */
 #define BUCK_DISPLAY_FILTER_TAU_MS 200.0f
+#define BUCK_CURRENT_DISPLAY_FILTER_TAU_MS 500.0f
 #define BUCK_DISPLAY_STALE_MS      30U
 #define BUCK_DISPLAY_DIGIT_CONFIRM_MS 800U
 #define BUCK_DISPLAY_DIGIT_FAST_CHANGE 3
@@ -28,9 +29,10 @@ static inline void BuckDisplayFilter_Reset(BuckDisplayFilter *filter)
 
 /* source distinguishes confirmed values from nominal-reference estimates.
  * Seed directly after startup, an invalid reading, a gap or source change. */
-static inline float BuckDisplayFilter_Update(BuckDisplayFilter *filter,
-                                              float sample, uint32_t now,
-                                              uint32_t source)
+static inline float BuckDisplayFilter_UpdateWithTau(BuckDisplayFilter *filter,
+                                                     float sample, uint32_t now,
+                                                     uint32_t source,
+                                                     float time_constant_ms)
 {
     if (!isfinite(sample))
     {
@@ -42,13 +44,21 @@ static inline float BuckDisplayFilter_Update(BuckDisplayFilter *filter,
         filter->value = sample;
     else if (elapsed != 0U)
     {
-        float alpha = (float)elapsed / (BUCK_DISPLAY_FILTER_TAU_MS + (float)elapsed);
+        float alpha = (float)elapsed / (time_constant_ms + (float)elapsed);
         filter->value += alpha * (sample - filter->value);
     }
     filter->last_ms = now;
     filter->source = source;
     filter->ready = 1U;
     return filter->value;
+}
+
+static inline float BuckDisplayFilter_Update(BuckDisplayFilter *filter,
+                                              float sample, uint32_t now,
+                                              uint32_t source)
+{
+    return BuckDisplayFilter_UpdateWithTau(filter, sample, now, source,
+                                            BUCK_DISPLAY_FILTER_TAU_MS);
 }
 
 static inline float BuckDisplayFilter_Get(BuckDisplayFilter *filter, uint32_t now)

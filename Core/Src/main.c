@@ -59,6 +59,8 @@ volatile float buck_input_voltage_display = NAN;
 volatile float buck_output_voltage_display = NAN;
 static BuckDisplayFilter input_display_filter;
 static BuckDisplayFilter output_display_filter;
+static BuckDisplayFilter input_current_display_filter;
+static BuckDisplayFilter output_current_display_filter;
 static BuckDisplayDigits input_display_digits;
 static BuckDisplayDigits output_display_digits;
 /* USER CODE END PV */
@@ -143,6 +145,15 @@ static void App_UpdateVoltageMonitor(void)
     /* A sign anomaly must not be hidden by the old positive digit history. */
     float filtered_input = BuckDisplayFilter_Update(&input_display_filter, input, now, input_source);
     float filtered_output = BuckDisplayFilter_Update(&output_display_filter, output, now, output_source);
+    float input_current = BuckADC_GetInputCurrentForDisplay();
+    float output_current = BuckADC_GetOutputCurrentForDisplay();
+    uint32_t current_source = (adc_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
+    (void)BuckDisplayFilter_UpdateWithTau(&input_current_display_filter, input_current,
+                                          now, current_source,
+                                          BUCK_CURRENT_DISPLAY_FILTER_TAU_MS);
+    (void)BuckDisplayFilter_UpdateWithTau(&output_current_display_filter, output_current,
+                                          now, current_source,
+                                          BUCK_CURRENT_DISPLAY_FILTER_TAU_MS);
     /* Invalidate digit history immediately, even between OLED refreshes. */
     if (!isfinite(filtered_input))
         buck_input_voltage_display = BuckDisplayDigits_Update(&input_display_digits, NAN, now, input_source);
@@ -160,8 +171,8 @@ static void App_UpdateVoltageDisplay(void)
     uint32_t output_estimate = (adc_output_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
     uint32_t input_source = input_estimate | ((adc_input_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
     uint32_t output_source = output_estimate | ((adc_output_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
-    float input_current = BuckADC_GetInputCurrentForDisplay();
-    float output_current = BuckADC_GetOutputCurrentForDisplay();
+    float input_current = BuckDisplayFilter_Get(&input_current_display_filter, HAL_GetTick());
+    float output_current = BuckDisplayFilter_Get(&output_current_display_filter, HAL_GetTick());
     uint32_t current_estimate = (adc_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
     if (!isfinite(input)) BuckDisplayFilter_Reset(&input_display_filter);
     if (!isfinite(output)) BuckDisplayFilter_Reset(&output_display_filter);
