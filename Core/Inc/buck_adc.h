@@ -39,6 +39,8 @@
 #define BUCK_ADC_OUTPUT_DIVIDER_RATIO 40.0f
 #define BUCK_ADC_UPDATE_MS            10U
 #define BUCK_ADC_AVERAGE_COUNT        16U
+#define BUCK_ADC_CURRENT_SHUNT_OHMS   0.020f /* Assumed 20 mOhm shunt. */
+#define BUCK_ADC_CURRENT_AMP_GAIN      8.0f
 
 /* Bitmask: reference unknown is expected until the hardware is confirmed. */
 #define BUCK_ADC_ERR_REFERENCE        (1UL << 0)
@@ -57,6 +59,15 @@
 #define BUCK_ADC_ERR_CONVERSION       (1UL << 13)
 #define BUCK_ADC_ERR_REFERENCE_MODE   (1UL << 14)
 #define BUCK_ADC_ERR_VREFBUF_READY    (1UL << 15)
+
+#define BUCK_ADC_CURRENT_ERR_INIT     (1UL << 0)
+#define BUCK_ADC_CURRENT_ERR_SAMPLE   (1UL << 1)
+#define BUCK_ADC_CURRENT_ERR_TIMEOUT  (1UL << 2)
+#define BUCK_ADC_CURRENT_ERR_OVERRUN  (1UL << 3)
+#define BUCK_ADC_CURRENT_ERR_SEQUENCE (1UL << 4)
+#define BUCK_ADC_CURRENT_ERR_RAIL     (1UL << 5)
+#define BUCK_ADC_CURRENT_ERR_REFERENCE (1UL << 6)
+#define BUCK_ADC_CURRENT_ERR_STALE    (1UL << 7)
 
 /* Two identical AMC1311 voltage boards, each with its own U+/U- output.
  * VIN: PA0/ADC1_IN1 (+), PA1/ADC1_IN2 (-), header pins 3/4.
@@ -82,6 +93,16 @@ extern volatile uint32_t adc_vrefbuf_ready, adc_vrefbuf_startup_status;
 extern volatile uint32_t adc_vrefbuf_fault_csr;
 extern volatile float adc_reference_voltage, adc_vdda_voltage;
 extern volatile uint32_t adc_reference_confirmed, adc_reference_hardware_confirmed;
+/* AMC1200 differential outputs sampled by ADC2:
+ * input I+/I- = PB11/ADC2_IN14 and PA5/ADC2_IN13;
+ * output I+/I- = PC5/ADC2_IN11 and PB2/ADC2_IN12.
+ * Assumed 20 mOhm shunts and AMC1200 gain 8. These values are display-only
+ * and are never used by the voltage PID or its fault logic. */
+extern volatile uint32_t adc_current_raw[4]; /* IN+, IN-, OUT+, OUT-. */
+extern volatile uint32_t adc_input_current_valid, adc_output_current_valid;
+extern volatile uint32_t adc_input_current_error_code, adc_output_current_error_code;
+extern volatile uint32_t adc_current_sample_ms;
+extern volatile float buck_input_current, buck_output_current;
 
 typedef struct {
     uint32_t minimum, maximum, zero_count, full_count, samples;
@@ -131,5 +152,7 @@ float BuckADC_GetOutputVoltageStartupEstimate(void);
  * NEVER use these getters for feedback or to decide that PWM may start. */
 float BuckADC_GetInputVoltageForDisplay(void);
 float BuckADC_GetOutputVoltageForDisplay(void);
+float BuckADC_GetInputCurrentForDisplay(void);
+float BuckADC_GetOutputCurrentForDisplay(void);
 
 #endif

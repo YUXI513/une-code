@@ -27,13 +27,21 @@ volatile float adc_reference_voltage = BUCK_ADC_REFERENCE_VOLTS;
 volatile float adc_vdda_voltage = BUCK_ADC_VDDA_VOLTS;
 volatile uint32_t adc_reference_confirmed = BUCK_ADC_REFERENCE_CONFIRMED;
 volatile uint32_t adc_reference_hardware_confirmed = BUCK_ADC_REFERENCE_HARDWARE_CONFIRMED;
+volatile uint32_t adc_current_raw[4];
+volatile uint32_t adc_input_current_valid, adc_output_current_valid;
+volatile uint32_t adc_input_current_error_code = BUCK_ADC_CURRENT_ERR_INIT;
+volatile uint32_t adc_output_current_error_code = BUCK_ADC_CURRENT_ERR_INIT;
+volatile uint32_t adc_current_sample_ms;
+volatile float buck_input_current = NAN, buck_output_current = NAN;
 volatile BuckADCRawStats adc_input_stats[2];
 volatile uint32_t adc_input_full_total[2], adc_input_zero_total[2];
 volatile uint32_t adc_diagnostic_batches;
 volatile BuckADCFirstInputRail adc_first_input_rail;
 
 static ADC_HandleTypeDef hadc1;
+static ADC_HandleTypeDef hadc2;
 static uint32_t adc_initialized;
+static uint32_t adc_current_initialized;
 static uint32_t adc_pwm_synchronized;
 static uint32_t init_error;
 static uint32_t first_rail_batch_active;
@@ -218,6 +226,61 @@ static HAL_StatusTypeDef InitializeReference(void)
     return HAL_OK;
 }
 
+static void InitializeCurrentADC(GPIO_InitTypeDef *gpio,
+                                 const ADC_ChannelConfTypeDef *voltage_channel)
+{
+    static const uint32_t current_channels[4] = {
+        ADC_CHANNEL_14, /* PB11: AMC1200 input-current VOUTP */
+        ADC_CHANNEL_13, /* PA5:  AMC1200 input-current VOUTN */
+        ADC_CHANNEL_11, /* PC5:  AMC1200 output-current VOUTP */
+        ADC_CHANNEL_12  /* PB2:  AMC1200 output-current VOUTN */
+    };
+    static const uint32_t current_ranks[4] = {
+        ADC_REGULAR_RANK_1, ADC_REGULAR_RANK_2,
+        ADC_REGULAR_RANK_3, ADC_REGULAR_RANK_4
+    };
+    ADC_ChannelConfTypeDef channel = *voltage_channel;
+
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    /* PA5 is also the board LED pin. The user's AMC1200 connection takes
+     * ownership of it as an analog input while this firmware is running. */
+    gpio->Pin = GPIO_PIN_5;
+    HAL_GPIO_Init(GPIOA, gpio);
+    gpio->Pin = GPIO_PIN_11 | GPIO_PIN_2;
+    HAL_GPIO_Init(GPIOB, gpio);
+    gpio->Pin = GPIO_PIN_5;
+    HAL_GPIO_Init(GPIOC, gpio);
+
+    hadc2.Instance = ADC2;
+    hadc2.Init = hadc1.Init;
+    hadc2.Init.NbrOfConversion = 4U;
+    if (HAL_ADC_Init(&hadc2) != HAL_OK
+        || HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK)
+    {
+        adc_input_current_error_code = BUCK_ADC_CURRENT_ERR_INIT;
+        adc_output_current_error_code = BUCK_ADC_CURRENT_ERR_INIT;
+        adc_current_initialized = 0U;
+        return;
+    }
+
+    for (uint32_t rank = 0U; rank < 4U; ++rank)
+    {
+        channel.Channel = current_channels[rank];
+        channel.Rank = current_ranks[rank];
+        if (HAL_ADC_ConfigChannel(&hadc2, &channel) != HAL_OK)
+        {
+            adc_input_current_error_code = BUCK_ADC_CURRENT_ERR_INIT;
+            adc_output_current_error_code = BUCK_ADC_CURRENT_ERR_INIT;
+            adc_current_initialized = 0U;
+            return;
+        }
+    }
+    adc_input_current_error_code = 0U;
+    adc_output_current_error_code = 0U;
+    adc_current_initialized = 1U;
+}
+
 HAL_StatusTypeDef BuckADC_Init(void)
 {
     RCC_PeriphCLKInitTypeDef clock = {0};
@@ -263,6 +326,8 @@ HAL_StatusTypeDef BuckADC_Init(void)
     }
     __HAL_RCC_ADC12_CLK_ENABLE();
     __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
     adc_clock_hz = HAL_RCC_GetSysClockFreq() / 8U; /* 168 MHz / 8 = 21 MHz */
     if (adc_clock_hz == 0U || adc_clock_hz > 42000000U)
     {
@@ -338,6 +403,7 @@ HAL_StatusTypeDef BuckADC_Init(void)
     init_error = 0U;
     adc_initialized = 1U;
     adc_pwm_synchronized = 0U;
+    InitializeCurrentADC(&gpio, &channel);
     adc_last_hal_status = HAL_OK;
     return HAL_OK;
 }
@@ -353,6 +419,10 @@ HAL_StatusTypeDef BuckADC_UsePWMSynchronizedTrigger(void)
     MODIFY_REG(hadc1.Instance->CFGR,
                ADC_CFGR_EXTSEL_Msk | ADC_CFGR_EXTEN_Msk,
                ADC_EXTERNALTRIG_T1_TRGO2 | ADC_EXTERNALTRIGCONVEDGE_RISING);
+    if (adc_current_initialized != 0U)
+        MODIFY_REG(hadc2.Instance->CFGR,
+                   ADC_CFGR_EXTSEL_Msk | ADC_CFGR_EXTEN_Msk,
+                   ADC_EXTERNALTRIG_T1_TRGO2 | ADC_EXTERNALTRIGCONVEDGE_RISING);
     adc_pwm_synchronized = 1U;
     return HAL_OK;
 }
@@ -427,10 +497,62 @@ static HAL_StatusTypeDef ReadFrame(uint32_t values[5], uint32_t rank_raw[ADC_SEQ
     return status;
 }
 
+static HAL_StatusTypeDef ReadCurrentFrame(uint32_t values[4], uint32_t *reason)
+{
+    HAL_StatusTypeDef status = HAL_ADC_Start(&hadc2);
+    if (status != HAL_OK)
+        *reason = BUCK_ADC_CURRENT_ERR_SAMPLE;
+
+    for (uint32_t rank = 0U; status == HAL_OK && rank < 4U; ++rank)
+    {
+        status = HAL_ADC_PollForConversion(&hadc2, ADC_POLL_TIMEOUT_MS);
+        if (status != HAL_OK)
+        {
+            *reason = status == HAL_TIMEOUT ? BUCK_ADC_CURRENT_ERR_TIMEOUT
+                                            : BUCK_ADC_CURRENT_ERR_SAMPLE;
+            break;
+        }
+        uint32_t flags = hadc2.Instance->ISR;
+        if ((flags & ADC_FLAG_OVR) != 0U)
+        {
+            *reason = BUCK_ADC_CURRENT_ERR_OVERRUN;
+            status = HAL_ERROR;
+            break;
+        }
+        if (((flags & ADC_FLAG_EOS) != 0U) != (rank == 3U))
+        {
+            *reason = BUCK_ADC_CURRENT_ERR_SEQUENCE;
+            status = HAL_ERROR;
+            break;
+        }
+        values[rank] = HAL_ADC_GetValue(&hadc2);
+        if (values[rank] > ADC_MAX_RAW)
+        {
+            *reason = BUCK_ADC_CURRENT_ERR_SAMPLE;
+            status = HAL_ERROR;
+            break;
+        }
+    }
+
+    HAL_StatusTypeDef stopped = HAL_ADC_Stop(&hadc2);
+    if (stopped != HAL_OK)
+    {
+        *reason |= BUCK_ADC_CURRENT_ERR_SAMPLE;
+        status = stopped;
+    }
+    if (status != HAL_OK)
+        adc_current_initialized = 0U; /* Display-only channel; keep voltage PID alive. */
+    return status;
+}
+
 HAL_StatusTypeDef BuckADC_ReadVoltage(void)
 {
     uint32_t batch_started = HAL_GetTick();
     uint32_t sums[4] = {0U};
+    uint32_t current_sums[4] = {0U};
+    uint32_t current_frames = 0U;
+    uint32_t current_input_rail = 0U, current_output_rail = 0U;
+    uint32_t current_read_error = 0U;
     uint32_t reason = 0U, input_rail = 0U, output_rail = 0U;
     uint32_t recovered_input_rail = 0U;
     BeginInputDiagnosticBatch();
@@ -439,6 +561,15 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
     adc_error_code = ReferenceValid() ? 0U : BUCK_ADC_ERR_REFERENCE;
     adc_input_error_code = adc_error_code;
     adc_output_error_code = adc_error_code;
+    adc_input_current_valid = 0U;
+    adc_output_current_valid = 0U;
+    buck_input_current = NAN;
+    buck_output_current = NAN;
+    if (adc_current_initialized != 0U)
+    {
+        adc_input_current_error_code = 0U;
+        adc_output_current_error_code = 0U;
+    }
     if (adc_initialized == 0U)
     {
         return Fail(init_error | BUCK_ADC_ERR_INIT, HAL_ERROR);
@@ -454,6 +585,30 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
         {
             FinishInputDiagnosticBatch(status, reason | adc_error_code | input_rail | output_rail);
             return Fail(reason, status);
+        }
+        if (adc_current_initialized != 0U)
+        {
+            uint32_t current_values[4] = {0U};
+            uint32_t current_reason = 0U;
+            if (ReadCurrentFrame(current_values, &current_reason) == HAL_OK)
+            {
+                ++current_frames;
+                for (uint32_t index = 0U; index < 4U; ++index)
+                {
+                    current_sums[index] += current_values[index];
+                    if (current_values[index] == 0U || current_values[index] == ADC_MAX_RAW)
+                    {
+                        if (index < 2U) current_input_rail = 1U;
+                        else current_output_rail = 1U;
+                    }
+                }
+            }
+            else
+            {
+                current_read_error |= current_reason;
+                /* ADC2 is display-only. A failed scan invalidates current
+                 * readouts but must never reject good ADC1 voltage feedback. */
+            }
         }
         RecordInputFrame(values, rank_raw, sample + 1U);
         /* Confirm a clipped PA0 primary sample once per batch. Repeated or
@@ -501,6 +656,44 @@ HAL_StatusTypeDef BuckADC_ReadVoltage(void)
     adc_raw_plus = (sums[2] + BUCK_ADC_AVERAGE_COUNT / 2U) / BUCK_ADC_AVERAGE_COUNT;
     adc_raw_minus = (sums[3] + BUCK_ADC_AVERAGE_COUNT / 2U) / BUCK_ADC_AVERAGE_COUNT;
     adc_raw_valid = 1U;
+    adc_current_sample_ms = HAL_GetTick();
+    if (current_frames == BUCK_ADC_AVERAGE_COUNT && ReferenceScaleUsable())
+    {
+        float raw_scale = adc_reference_voltage /
+                          ((float)ADC_MAX_RAW * BUCK_ADC_AVERAGE_COUNT);
+        for (uint32_t index = 0U; index < 4U; ++index)
+            adc_current_raw[index] = (current_sums[index] + BUCK_ADC_AVERAGE_COUNT / 2U)
+                                     / BUCK_ADC_AVERAGE_COUNT;
+        if (current_input_rail != 0U)
+            adc_input_current_error_code |= BUCK_ADC_CURRENT_ERR_RAIL;
+        else
+        {
+            buck_input_current = (((float)current_sums[0] - (float)current_sums[1])
+                                  * raw_scale)
+                                 / (BUCK_ADC_CURRENT_AMP_GAIN * BUCK_ADC_CURRENT_SHUNT_OHMS);
+            adc_input_current_valid = isfinite(buck_input_current) ? 1U : 0U;
+        }
+        if (current_output_rail != 0U)
+            adc_output_current_error_code |= BUCK_ADC_CURRENT_ERR_RAIL;
+        else
+        {
+            buck_output_current = (((float)current_sums[2] - (float)current_sums[3])
+                                   * raw_scale)
+                                  / (BUCK_ADC_CURRENT_AMP_GAIN * BUCK_ADC_CURRENT_SHUNT_OHMS);
+            adc_output_current_valid = isfinite(buck_output_current) ? 1U : 0U;
+        }
+    }
+    else
+    {
+        if (adc_current_initialized == 0U && current_read_error == 0U)
+            current_read_error = BUCK_ADC_CURRENT_ERR_INIT;
+        if (current_frames != 0U && !ReferenceScaleUsable())
+            current_read_error |= BUCK_ADC_CURRENT_ERR_REFERENCE;
+        if (current_read_error == 0U)
+            current_read_error = BUCK_ADC_CURRENT_ERR_SAMPLE;
+        adc_input_current_error_code |= current_read_error;
+        adc_output_current_error_code |= current_read_error;
+    }
     adc_last_sample_ms = HAL_GetTick();
     ++adc_update_count;
     adc_last_hal_status = HAL_OK;
@@ -626,6 +819,36 @@ float BuckADC_GetOutputVoltageForDisplay(void)
 {
     CheckVoltageFreshness();
     return SignedEstimateUsable(adc_output_error_code) ? buck_output_voltage : NAN;
+}
+
+static void CheckCurrentFreshness(void)
+{
+    if (!ReferenceScaleUsable() || !ReferenceModeHealthy())
+    {
+        adc_input_current_valid = 0U;
+        adc_output_current_valid = 0U;
+        adc_input_current_error_code |= BUCK_ADC_CURRENT_ERR_REFERENCE;
+        adc_output_current_error_code |= BUCK_ADC_CURRENT_ERR_REFERENCE;
+    }
+    if ((uint32_t)(HAL_GetTick() - adc_current_sample_ms) > 3U * BUCK_ADC_UPDATE_MS)
+    {
+        adc_input_current_valid = 0U;
+        adc_output_current_valid = 0U;
+        adc_input_current_error_code |= BUCK_ADC_CURRENT_ERR_STALE;
+        adc_output_current_error_code |= BUCK_ADC_CURRENT_ERR_STALE;
+    }
+}
+
+float BuckADC_GetInputCurrentForDisplay(void)
+{
+    CheckCurrentFreshness();
+    return adc_input_current_valid ? buck_input_current : NAN;
+}
+
+float BuckADC_GetOutputCurrentForDisplay(void)
+{
+    CheckCurrentFreshness();
+    return adc_output_current_valid ? buck_output_current : NAN;
 }
 
 float BuckADC_GetOutputVoltageStartupEstimate(void)

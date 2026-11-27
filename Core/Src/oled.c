@@ -4,10 +4,9 @@
 
 #define OLED_WIDTH  128U
 #define OLED_PAGES  8U
-#define OLED_TEXT_COLUMNS 21U
 
-static char text_target[OLED_PAGES][OLED_TEXT_COLUMNS];
-static char text_shown[OLED_PAGES][OLED_TEXT_COLUMNS];
+static uint8_t text_target[OLED_PAGES][OLED_WIDTH];
+static uint8_t text_shown[OLED_PAGES][OLED_WIDTH];
 static uint32_t text_cursor;
 
 /* Five columns, low bit at top. Digits followed by uppercase A-Z. */
@@ -116,8 +115,8 @@ static void OLED_GPIO_Init(void)
 
 void OLED_Clear(void)
 {
-    memset(text_target, ' ', sizeof(text_target));
-    memset(text_shown, ' ', sizeof(text_shown));
+    memset(text_target, 0, sizeof(text_target));
+    memset(text_shown, 0, sizeof(text_shown));
     text_cursor = 0U;
     for (uint8_t page = 0U; page < OLED_PAGES; ++page)
     {
@@ -132,30 +131,64 @@ void OLED_Clear(void)
 void OLED_SetTextLine(uint8_t row, const char *text)
 {
     if (row >= OLED_PAGES || text == NULL) return;
-    uint32_t column = 0U;
-    while (column < OLED_TEXT_COLUMNS && text[column] != '\0')
+    memset(text_target[row], 0, sizeof(text_target[row]));
+    uint32_t x = 0U;
+    const unsigned char *cursor = (const unsigned char *)text;
+    while (*cursor != '\0' && x < OLED_WIDTH)
     {
-        text_target[row][column] = text[column];
-        ++column;
+        const uint8_t *glyph = NULL;
+        uint32_t bytes = 1U;
+        if (strncmp((const char *)cursor, "\xE8\xBE\x93", 3U) == 0)
+            glyph = oled_measurement_chinese_glyphs[0], bytes = 3U; /* 输 */
+        else if (strncmp((const char *)cursor, "\xE5\x85\xA5", 3U) == 0)
+            glyph = oled_measurement_chinese_glyphs[1], bytes = 3U; /* 入 */
+        else if (strncmp((const char *)cursor, "\xE7\x94\xB5", 3U) == 0)
+            glyph = oled_measurement_chinese_glyphs[2], bytes = 3U; /* 电 */
+        else if (strncmp((const char *)cursor, "\xE5\x8E\x8B", 3U) == 0)
+            glyph = oled_measurement_chinese_glyphs[3], bytes = 3U; /* 压 */
+        else if (strncmp((const char *)cursor, "\xE6\xB5\x81", 3U) == 0)
+            glyph = oled_measurement_chinese_glyphs[4], bytes = 3U; /* 流 */
+        else if (strncmp((const char *)cursor, "\xE5\x87\xBA", 3U) == 0)
+            glyph = oled_measurement_chinese_glyphs[5], bytes = 3U; /* 出 */
+        else if (strncmp((const char *)cursor, "\xEF\xBC\x9A", 3U) == 0)
+            glyph = oled_measurement_chinese_glyphs[6], bytes = 3U; /* ： */
+
+        if (glyph != NULL)
+        {
+            for (uint32_t column = 0U; column < 8U && x < OLED_WIDTH; ++column)
+                text_target[row][x++] = glyph[column];
+            cursor += bytes;
+        }
+        else if (*cursor < 0x80U)
+        {
+            char ch = (char)*cursor++;
+            for (uint32_t column = 0U; column < 6U && x < OLED_WIDTH; ++column)
+                text_target[row][x++] = TextColumn(ch, column);
+        }
+        else
+        {
+            /* Skip an unsupported UTF-8 code point without splitting its tail. */
+            cursor += (cursor[0] & 0xF8U) == 0xF0U ? 4U
+                    : (cursor[0] & 0xF0U) == 0xE0U ? 3U
+                    : (cursor[0] & 0xE0U) == 0xC0U ? 2U : 1U;
+        }
     }
-    while (column < OLED_TEXT_COLUMNS) text_target[row][column++] = ' ';
 }
 
 void OLED_Process(void)
 {
-    /* Bounded transfer: three position commands and six data bytes maximum.
-     * The main-loop scheduler gives ADC sampling priority over this work. */
-    for (uint32_t scanned = 0U; scanned < OLED_PAGES * OLED_TEXT_COLUMNS; ++scanned)
+    /* Transfer one changed page column at a time. The main-loop scheduler
+     * gives ADC sampling priority over this work. */
+    for (uint32_t scanned = 0U; scanned < OLED_PAGES * OLED_WIDTH; ++scanned)
     {
-        uint32_t row = text_cursor / OLED_TEXT_COLUMNS;
-        uint32_t column = text_cursor % OLED_TEXT_COLUMNS;
-        text_cursor = (text_cursor + 1U) % (OLED_PAGES * OLED_TEXT_COLUMNS);
-        char ch = text_target[row][column];
-        if (ch == text_shown[row][column]) continue;
-        OLED_SetPosition((uint8_t)(column * 6U), (uint8_t)row);
-        for (uint32_t pixel = 0U; pixel < 6U; ++pixel)
-            OLED_WriteData(TextColumn(ch, pixel));
-        text_shown[row][column] = ch;
+        uint32_t row = text_cursor / OLED_WIDTH;
+        uint32_t column = text_cursor % OLED_WIDTH;
+        text_cursor = (text_cursor + 1U) % (OLED_PAGES * OLED_WIDTH);
+        uint8_t pixels = text_target[row][column];
+        if (pixels == text_shown[row][column]) continue;
+        OLED_SetPosition((uint8_t)column, (uint8_t)row);
+        OLED_WriteData(pixels);
+        text_shown[row][column] = pixels;
         return;
     }
 }

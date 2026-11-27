@@ -101,6 +101,18 @@ static void App_SetVoltageLine(uint8_t row, const char *label, float voltage, ui
     OLED_SetTextLine(row, line);
 }
 
+static void App_SetMeasurementLine(uint8_t row, const char *label, float value,
+                                   const char *unit, uint32_t estimate)
+{
+    char line[48];
+    if (isfinite(value))
+        (void)snprintf(line, sizeof(line), "%s：%s%.2f%s", label,
+                       estimate ? "~" : "", value, unit);
+    else
+        (void)snprintf(line, sizeof(line), "%s：---%s", label, unit);
+    OLED_SetTextLine(row, line);
+}
+
 static void App_UpdateVoltageMonitor(void)
 {
     float input = BuckADC_GetInputVoltageForDisplay();
@@ -130,6 +142,9 @@ static void App_UpdateVoltageDisplay(void)
     uint32_t output_estimate = (adc_output_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
     uint32_t input_source = input_estimate | ((adc_input_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
     uint32_t output_source = output_estimate | ((adc_output_error_code & BUCK_ADC_ERR_NEGATIVE) ? 2U : 0U);
+    float input_current = BuckADC_GetInputCurrentForDisplay();
+    float output_current = BuckADC_GetOutputCurrentForDisplay();
+    uint32_t current_estimate = (adc_error_code & BUCK_ADC_ERR_REFERENCE) != 0U;
     if (!isfinite(input)) BuckDisplayFilter_Reset(&input_display_filter);
     if (!isfinite(output)) BuckDisplayFilter_Reset(&output_display_filter);
     uint32_t now = HAL_GetTick();
@@ -139,8 +154,11 @@ static void App_UpdateVoltageDisplay(void)
     output = BuckDisplayDigits_Update(&output_display_digits, output, now, output_source);
     buck_input_voltage_display = input;
     buck_output_voltage_display = output;
-    App_SetVoltageLine(0U, "VIN", input, input_estimate);
-    App_SetVoltageLine(1U, "VOUT", output, output_estimate);
+    App_SetMeasurementLine(0U, "输入电压", input, "V", input_estimate);
+    App_SetMeasurementLine(1U, "输入电流", input_current, "A", current_estimate);
+    OLED_SetTextLine(2U, "");
+    App_SetMeasurementLine(3U, "输出电压", output, "V", output_estimate);
+    App_SetMeasurementLine(4U, "输出电流", output_current, "A", current_estimate);
 
     /* A valid ADC conversion at a rail is an input-range diagnostic, not
      * a conversion failure. Keep the module flags/validity unchanged. */
@@ -159,6 +177,8 @@ static void App_UpdateVoltageDisplay(void)
         signal_state = "VOUT ADC LIMIT";
     else if ((adc_error_code & BUCK_ADC_ERR_NEGATIVE) != 0U)
         signal_state = "NEGATIVE DIFF";
+    else if ((adc_input_current_error_code | adc_output_current_error_code) != 0U)
+        signal_state = "CURRENT ADC ERROR";
 
     const char *state = "ADC OK";
     if ((adc_error_code & BUCK_ADC_ERR_VREFBUF_READY) != 0U)
@@ -172,24 +192,8 @@ static void App_UpdateVoltageDisplay(void)
         state = "NOMINAL VREF 2.5V";
     else if ((adc_error_code & BUCK_ADC_ERR_REFERENCE) != 0U)
         state = "REF UNCONFIRMED";
-    OLED_SetTextLine(2U, state);
-    if (adc_raw_valid != 0U)
-    {
-        snprintf(line, sizeof(line), "IN +%4lu -%4lu",
-                 (unsigned long)adc_input_raw_plus, (unsigned long)adc_input_raw_minus);
-        OLED_SetTextLine(3U, line);
-        snprintf(line, sizeof(line), "OUT+%4lu -%4lu",
-                 (unsigned long)adc_raw_plus, (unsigned long)adc_raw_minus);
-        OLED_SetTextLine(4U, line);
-    }
-    else
-    {
-        OLED_SetTextLine(3U, "IN +---- -----");
-        OLED_SetTextLine(4U, "OUT+---- -----");
-    }
-    snprintf(line, sizeof(line), "EI:%04lX EO:%04lX",
-             (unsigned long)adc_input_error_code, (unsigned long)adc_output_error_code);
-    OLED_SetTextLine(5U, line);
+    OLED_SetTextLine(2U, "");
+    OLED_SetTextLine(5U, state);
     /* Keep acquisition visible; the half-input controller also shows its
      * current, unsmoothed final target once valid feedback has been used. */
 #if ADC_ONLY_TEST
@@ -207,7 +211,8 @@ static void App_UpdateVoltageDisplay(void)
         snprintf(line, sizeof(line), "PID ERR:%04lX",
                  (unsigned long)(buck_control_fault | buck_control_async_fault));
     else
-        snprintf(line, sizeof(line), "ADC N:%lu", (unsigned long)adc_update_count);
+        snprintf(line, sizeof(line), "EI:%04lX EO:%04lX",
+                 (unsigned long)adc_input_error_code, (unsigned long)adc_output_error_code);
 #endif
     OLED_SetTextLine(6U, line);
 #if !ADC_ONLY_TEST
